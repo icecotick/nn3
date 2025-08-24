@@ -1,0 +1,216 @@
+import discord
+from discord.ext import commands
+from discord.ext.commands import CommandOnCooldown
+import random
+from utils.database import get_balance, update_balance, get_custom_role, create_custom_role
+from config import ROLE_NAME, CUSTOM_ROLE_PRICE, CRIT_CHANCE, SUCCESS_CHANCE, ADMIN_ROLES
+
+def is_admin(member):
+    return any(role.name.lower() in [r.lower() for r in ADMIN_ROLES] for role in member.roles)
+
+class Economy(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="славанн")
+    @commands.cooldown(1, 7200, commands.BucketType.user)
+    async def slav_party(self, ctx):
+        user = ctx.author
+        role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
+
+        if not role:
+            await ctx.send('❌ Роль не найдена!')
+            return
+
+        if role in user.roles:
+            await ctx.send(f'🟥 {user.mention}, ты уже Патриот!')
+            return
+
+        roll = random.randint(1, 100)
+        balance = await get_balance(user.id, self.bot.db)
+
+        if roll <= CRIT_CHANCE:
+            await user.add_roles(role)
+            await update_balance(user.id, 1000, self.bot.db)
+            await ctx.send(f'💥 **КРИТ!** {user.mention}, ты получил роль + 1000 социального рейтинга! (Баланс: {await get_balance(user.id, self.bot.db)})')
+
+        elif roll <= SUCCESS_CHANCE:
+            await user.add_roles(role)
+            await update_balance(user.id, 100, self.bot.db)
+            await ctx.send(f'🟥 {user.mention}, ты получил роль + 100 рейтинга! (Баланс: {await get_balance(user.id, self.bot.db)})')
+
+        else:
+            penalty = min(10, balance)
+            await update_balance(user.id, -penalty, self.bot.db)
+            await ctx.send(f'🕊 {user.mention}, -{penalty} рейтинга. Попробуй ещё! (Баланс: {await get_balance(user.id, self.bot.db)})')
+
+    @commands.command(name="фарм")
+    @commands.cooldown(1, 1200, commands.BucketType.user)
+    async def farm(self, ctx):
+        user = ctx.author
+        role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
+
+        if not role or role not in user.roles:
+            await ctx.send("⛔ Эта команда доступна только для Патриотов.")
+            return
+
+        reward = random.randint(5, 15)
+        await update_balance(user.id, reward, self.bot.db)
+        await ctx.send(f"🌾 {user.mention}, вы заработали {reward} соц. кредитов! (Баланс: {await get_balance(user.id, self.bot.db)})")
+
+    @commands.command(name="баланс")
+    @commands.cooldown(1, 5, commands.BucketType.user)
+    async def balance(self, ctx):
+        bal = await get_balance(ctx.author.id, self.bot.db)
+        await ctx.send(f'💰 {ctx.author.mention}, ваш баланс: {bal}')
+
+    @commands.command(name="перевести")
+    async def transfer(self, ctx, member: discord.Member, amount: int):
+        if amount <= 0:
+            await ctx.send("❌ Сумма должна быть положительной!")
+            return
+        if member == ctx.author:
+            await ctx.send("❌ Нельзя переводить самому себе!")
+            return
+
+        sender_balance = await get_balance(ctx.author.id, self.bot.db)
+        if sender_balance < amount:
+            await ctx.send("❌ Недостаточно средств!")
+            return
+
+        await update_balance(ctx.author.id, -amount, self.bot.db)
+        await update_balance(member.id, amount, self.bot.db)
+        await ctx.send(f'✅ {ctx.author.mention} перевел {amount} рейтинга {member.mention}!')
+
+    @commands.command(name="топ")
+    @commands.cooldown(1, 5, commands.BucketType.user)
+    async def top(self, ctx):
+        async with self.bot.db.acquire() as conn:
+            top_users = await conn.fetch("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
+
+        if not top_users:
+            await ctx.send("😔 Таблица пуста.")
+            return
+
+        leaderboard = []
+        for i, record in enumerate(top_users, start=1):
+            try:
+                user = await self.bot.fetch_user(record['user_id'])
+                leaderboard.append(f"{i}. {user.name} — {record['balance']} кредитов")
+            except:
+                leaderboard.append(f"{i}. [Неизвестный пользователь] — {record['balance']} кредитов")
+
+        await ctx.send("🏆 **Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
+
+    @commands.command(name="допкредит")
+    async def add_credits(self, ctx, member: discord.Member, amount: int):
+        if not is_admin(ctx.author):
+            await ctx.send("❌ Эта команда доступна только для администраторов!")
+            return
+        
+        if amount <= 0:
+            await ctx.send("❌ Сумма должна быть положительной!")
+            return
+        
+        await update_balance(member.id, amount, self.bot.db)
+        new_balance = await get_balance(member.id, self.bot.db)
+        await ctx.send(f"✅ Администратор {ctx.author.mention} добавил {amount} кредитов пользователю {member.mention}\n💰 Новый баланс: {new_balance} кредитов")
+
+    @commands.command(name="минускредит")
+    async def remove_credits(self, ctx, member: discord.Member, amount: int):
+        if not is_admin(ctx.author):
+            await ctx.send("❌ Эта команда доступна только для администраторов!")
+            return
+        
+        if amount <= 0:
+            await ctx.send("❌ Сумма должна быть положительной!")
+            return
+        
+        current_balance = await get_balance(member.id, self.bot.db)
+        if current_balance < amount:
+            await ctx.send(f"❌ У пользователя только {current_balance} кредитов, нельзя снять {amount}!")
+            return
+        
+        await update_balance(member.id, -amount, self.bot.db)
+        new_balance = await get_balance(member.id, self.bot.db)
+        await ctx.send(f"✅ Администратор {ctx.author.mention} снял {amount} кредитов у пользователя {member.mention}\n💰 Новый баланс: {new_balance} кредитов")
+
+    @commands.command(name="магазин")
+    async def shop(self, ctx):
+        shop_text = f"""
+🛍 **Магазин социального кредита:**
+
+🎨 `!купитьроль "Название" #Цвет` - Купить кастомную роль ({CUSTOM_ROLE_PRICE} кредитов)
+Пример: `!купитьроль "Богач" #ff0000`
+
+💰 Ваш баланс: {await get_balance(ctx.author.id, self.bot.db)} кредитов
+"""
+        await ctx.send(shop_text)
+
+    @commands.command(name="купитьроль")
+    async def buy_role(self, ctx, role_name: str, role_color: str):
+        user = ctx.author
+        balance = await get_balance(user.id, self.bot.db)
+        
+        if balance < CUSTOM_ROLE_PRICE:
+            await ctx.send(f"❌ Недостаточно средств! Нужно {CUSTOM_ROLE_PRICE} кредитов, у вас {balance}.")
+            return
+        
+        existing_role = await get_custom_role(user.id, self.bot.db)
+        if existing_role:
+            try:
+                old_role = ctx.guild.get_role(existing_role['role_id'])
+                if old_role:
+                    await old_role.delete()
+            except:
+                pass
+        
+        try:
+            color = discord.Color.from_str(role_color)
+            new_role = await ctx.guild.create_role(
+                name=role_name,
+                color=color,
+                reason=f"Кастомная роль для {user.name}"
+            )
+            
+            await user.add_roles(new_role)
+            await create_custom_role(user.id, new_role.id, role_name, role_color, self.bot.db)
+            await update_balance(user.id, -CUSTOM_ROLE_PRICE, self.bot.db)
+            
+            await ctx.send(f"✅ {user.mention}, вы успешно купили роль {new_role.mention} за {CUSTOM_ROLE_PRICE} кредитов!")
+        except ValueError:
+            await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: `#ff0000`")
+        except Exception as e:
+            print(f"Ошибка при создании роли: {e}")
+            await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
+
+    @commands.command(name="помощь")
+    async def help_command(self, ctx):
+        help_text = f"""
+📜 **Команды бота:**
+
+🔴 `!славанн` — попытка стать Патриотом (2ч кд)
+🌾 `!фарм` — заработать кредиты (20м кд, только для Патриотов)
+💰 `!баланс` — показать ваш баланс (5с кд)
+💸 `!перевести @юзер сумма` — перевод кредитов
+🏆 `!топ` — топ-10 по балансу (5с кд)
+🛍 `!магазин` — просмотреть доступные товары
+🎨 `!купитьроль "Название" #Цвет` — купить кастомную роль ({CUSTOM_ROLE_PRICE} кредитов)
+➕ `!допкредит @юзер сумма` — добавить кредиты (только для админов)
+➖ `!минускредит @юзер сумма` — снять кредиты (только для админов)
+👥 `!создатьклан название` — создать клан
+👥 `!войтивклан название` — вступить в клан
+🏆 `!клантоп` — топ кланов
+👤 `!профиль @юзер` — посмотреть профиль
+📝 `!описание_профиль текст` — изменить описание профиля
+ℹ️ `!помощь` — это сообщение
+
+Примеры:
+`!купитьроль "Богач" #ff0000`
+`!допкредит @Пользователь 500`
+`!профиль @Участник`
+"""
+        await ctx.send(help_text)
+
+async def setup(bot):
+    await bot.add_cog(Economy(bot))

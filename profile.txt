@@ -1,0 +1,43 @@
+import discord
+from discord.ext import commands
+from utils.database import get_balance, get_user_clan, get_profile_description, update_profile_description
+
+class Profile(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="профиль")
+    async def profile(self, ctx, member: discord.Member = None):
+        if not member:
+            member = ctx.author
+        
+        balance = await get_balance(member.id, self.bot.db)
+        clan = await get_user_clan(member.id, self.bot.db)
+        description = await get_profile_description(member.id, self.bot.db)
+        
+        embed = discord.Embed(
+            title=f"Профиль {member.name}",
+            color=member.color
+        )
+        
+        avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+        embed.set_thumbnail(url=avatar_url)
+        
+        embed.add_field(name="💰 Баланс", value=f"{balance} кредитов", inline=True)
+        embed.add_field(name="👥 Клан", value=clan if clan else "Нет клана", inline=True)
+        embed.add_field(name="📝 Описание", value=description, inline=False)
+        embed.set_footer(text=f"ID: {member.id}")
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name="описание_профиль")
+    async def set_profile_description(self, ctx, *, description: str):
+        if len(description) > 200:
+            await ctx.send("❌ Описание не должно превышать 200 символов!")
+            return
+        
+        await update_profile_description(ctx.author.id, description, self.bot.db)
+        await ctx.send("✅ Описание профиля обновлено!")
+
+async def setup(bot):
+    await bot.add_cog(Profile(bot))
