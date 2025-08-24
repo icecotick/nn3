@@ -302,8 +302,7 @@ class Economy(commands.Cog):
         except Exception as e:
             print(f"Ошибка при создании роли: {e}")
             await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
-
-    @commands.command(name="помощь")
+            
 @commands.command(name="помощь")
 async def help_command(self, ctx):
     help_text = f"""
