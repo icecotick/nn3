@@ -586,5 +586,23 @@ def run_bot():
     except Exception as e:
         print(f"❌ Неожиданная ошибка: {e}")
 
+# Добавь в самый конец main.py
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot OK"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# Запускаем Flask в отдельном потоке
+flask_thread = Thread(target=run_flask)
+flask_thread.daemon = True
+flask_thread.start()
+
 if __name__ == "__main__":
     run_bot()
