@@ -493,8 +493,8 @@ class Profile(commands.Cog):
         await update_profile_description(ctx.author.id, description)
         msg = await ctx.send("✅ Описание профиля обновлено!")
         await delete_after_delay(msg, 60)
-
-  class Mod(commands.Cog):
+        
+    class Mod(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
@@ -600,8 +600,6 @@ class Fun(commands.Cog):
         # Перевод денег
         await update_balance(winner.id, bet)
         await update_balance(loser.id, -bet)
-
-      
         
         embed = Embed(
             title="⚔️ Дуэль завершена!",
@@ -609,7 +607,34 @@ class Fun(commands.Cog):
             color=Colour.green()
         )
         msg = await ctx.send(embed=embed)
+        await delete_after_delay(msg, 60) 
+            
+class Fun(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="ежедневный")
+    @commands.cooldown(1, 86400, commands.BucketType.user)
+    async def daily(self, ctx):
+        reward = random.randint(100, 500)
+        await update_balance(ctx.author.id, reward)
+        msg = await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов!")
         await delete_after_delay(msg, 60)
+
+    @commands.command(name="рулетка")
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def roulette(self, ctx, bet: int):
+        if bet <= 0:
+            await ctx.send("❌ Ставка должна быть положительной!")
+            return
+
+        balance = await get_balance(ctx.author.id)
+        if balance < bet:
+            await ctx.send("❌ Недостаточно кредитов!")
+            return
+
+        outcome = random.choice(["win", "lose", "refund"])
+
       class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
