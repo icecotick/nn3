@@ -495,7 +495,7 @@ class Profile(commands.Cog):
         await delete_after_delay(msg, 60)
         
     class Mod(commands.Cog):
-    def __init__(self, bot):
+        def __init__(self, bot):
         self.bot = bot
 
     def is_admin(self, member):
