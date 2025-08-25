@@ -149,6 +149,8 @@ async def update_level(user_id: int, xp: int, level: int):
             INSERT INTO levels (user_id, xp, level) VALUES ($1, $2, $3)
             ON CONFLICT (user_id) DO UPDATE SET xp = $2, level = $3
         """, user_id, xp, level)
+
+    
       class Economy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
