@@ -305,7 +305,7 @@ class Economy(commands.Cog):
             
 @commands.command(name="помощь")
 async def help_command(self, ctx):
-    help_text = f"""
+    help_text = """
 📜 **Команды бота:**
 
 🔴 `!славанн` — попытка стать Патриотом (2ч кд)
