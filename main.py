@@ -998,7 +998,7 @@ class Fun(commands.Cog):
 
     @commands.command(name="слоты")
     @commands.cooldown(1, 10, commands.BucketType.user)
-async def slots(self, ctx, bet: int = 10):
+    async def slots(self, ctx, bet: int = 10):
     if bet <= 0:
         await ctx.send("❌ Ставка должна быть положительной!")
         return
