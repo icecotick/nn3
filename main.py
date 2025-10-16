@@ -1361,9 +1361,10 @@ async def setup_bot():
         await bot.add_cog(Mod(bot))
         await bot.add_cog(Events(bot))
         print("✅ Все коги загружены")
+        return True
     except Exception as e:
         print(f"❌ Ошибка при настройке бота: {e}")
-        raise e
+        return False
 
 async def close_bot():
     """Корректное закрытие бота"""
@@ -1377,33 +1378,39 @@ async def close_bot():
     except Exception as e:
         print(f"⚠️ Ошибка при закрытии: {e}")
 
-async def main():
-    # Регистрируем обработчики сигналов
-    def signal_handler(signum, frame):
-        print(f"📡 Получен сигнал завершения")
-        asyncio.create_task(close_bot())
+def run_discord_bot():
+    """Запуск Discord бота в отдельном потоке"""
+    async def start_bot():
+        try:
+            setup_ok = await setup_bot()
+            if not setup_ok:
+                print("❌ Не удалось настроить бота")
+                return
+            
+            print("🚀 Запускаем Discord бота...")
+            await bot.start(TOKEN)
+        except KeyboardInterrupt:
+            print("⏹ Остановка по запросу пользователя...")
+        except Exception as e:
+            print(f"❌ Ошибка при запуске бота: {e}")
+        finally:
+            await close_bot()
     
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    keep_alive()
-    await setup_bot()
-    print("🚀 Запускаем Discord бота...")
-    
-    try:
-        await bot.start(TOKEN)
-    except KeyboardInterrupt:
-        print("⏹ Остановка по запросу пользователя...")
-    except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
-    finally:
-        await close_bot()
+    # Запускаем асинхронную функцию в отдельном потоке
+    asyncio.run(start_bot())
 
-if __name__ == 'main':
+if name == 'main':
+    print("🔧 Инициализация приложения...")
+    
+    # Запускаем Flask в главном потоке
+    keep_alive()
+    
+    # Даем Flask время запуститься
+    import time
+    time.sleep(2)
+    
+    # Запускаем Discord бота
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("👋 До свидания!")
+        run_discord_bot()
     except Exception as e:
         print(f"❌ Фатальная ошибка: {e}")
-        sys.exit(1)
