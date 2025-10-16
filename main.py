@@ -704,7 +704,8 @@ class Clans(commands.Cog):
         
         await update_balance(user.id, -CLAN_CREATION_PRICE)
         await ctx.send(f"✅ Клан '{clan_name}' создан! Вы стали лидером.")
-        @commands.command(name="войтивклан")
+    
+    @commands.command(name="войтивклан")
     async def join_clan(self, ctx, clan_name: str):
         user = ctx.author
         
