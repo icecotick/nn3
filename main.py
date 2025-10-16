@@ -1046,7 +1046,7 @@ class Fun(commands.Cog):
                 embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
         else:
                 embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
-                else:
+    else:
             embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
         
         embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
