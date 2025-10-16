@@ -2,13 +2,14 @@ import discord
 from discord.ext import commands
 from discord.ext.commands import CommandOnCooldown
 import random
-import sys
 import os
 import asyncpg
 import asyncio
 from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
+import signal
+import sys
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -26,11 +27,11 @@ MUTE_ROLE_NAME = "Muted"
 # Проверка переменных окружения
 if not TOKEN:
     print("❌ Ошибка: Не установлен DISCORD_TOKEN")
-    exit(1)
+    sys.exit(1)
 
 if not DATABASE_URL:
     print("❌ Ошибка: Не установлен DATABASE_URL")
-    exit(1)
+    sys.exit(1)
 
 # Настройки Discord
 intents = discord.Intents.default()
@@ -40,7 +41,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==================== FLASK СЕРВЕР ====================
-app = Flask('')
+app = Flask(name)
 
 @app.route('/')
 def home():
@@ -52,8 +53,8 @@ def health():
 
 def run_flask():
     try:
-        from waitress import serve
-        serve(app, host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+        port = int(os.environ.get('PORT', 8080))
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"❌ Ошибка Flask: {e}")
 
@@ -62,7 +63,7 @@ def keep_alive():
         flask_thread = Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
-        print("✅ Веб-сервер запущен на порту 8080")
+        print("✅ Веб-сервер запущен")
     except Exception as e:
         print(f"❌ Ошибка при запуске веб-сервера: {e}")
 
@@ -117,7 +118,7 @@ async def create_db_pool():
         return pool
     except Exception as e:
         print(f"❌ Ошибка базы данных: {e}")
-        exit(1)
+        sys.exit(1)
 
 async def get_balance(user_id: int):
     async with bot.db.acquire() as conn:
@@ -166,7 +167,7 @@ async def update_profile_description(user_id: int, description: str):
 
 # ==================== ЭКОНОМИКА ====================
 class Economy(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     def is_admin(self, member):
@@ -192,7 +193,7 @@ class Economy(commands.Cog):
         if roll <= CRIT_CHANCE:
             await user.add_roles(role)
             await update_balance(user.id, 1000)
-            await ctx.send(f'💥 **КРИТ!** {user.mention}, ты получил роль + 1000 социального рейтинга! (Баланс: {await get_balance(user.id)})')
+            await ctx.send(f'💥 КРИТ! {user.mention}, ты получил роль + 1000 социального рейтинга! (Баланс: {await get_balance(user.id)})')
 
         elif roll <= SUCCESS_CHANCE:
             await user.add_roles(role)
@@ -211,7 +212,7 @@ class Economy(commands.Cog):
         role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
 
         if not role or role not in user.roles:
-            await ctx.send("⛔ Эта команда доступна только для Патриотов.")
+            await ctx.send("⛔️ Эта команда доступна только для Патриотов.")
             return
 
         user_data = await get_user_data(user.id)
@@ -269,7 +270,7 @@ class Economy(commands.Cog):
             except:
                 leaderboard.append(f"{i}. [Неизвестный пользователь] — {record['balance']} кредитов")
 
-        await ctx.send("🏆 **Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
+        await ctx.send("🏆 Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
 
     @commands.command(name="допкредит")
     async def add_credits(self, ctx, member: discord.Member, amount: int):
@@ -303,40 +304,40 @@ class Economy(commands.Cog):
         await update_balance(member.id, -amount)
         new_balance = await get_balance(member.id)
         await ctx.send(f"✅ Администратор {ctx.author.mention} снял {amount} кредитов у пользователя {member.mention}\n💰 Новый баланс: {new_balance} кредитов")
-
+        
     @commands.command(name="магазин")
     async def shop(self, ctx):
         balance = await get_balance(ctx.author.id)
         
         shop_text = f"""
-🛍 **Магазин социального кредита:**
+🛍 Магазин социального кредита:
 
-🎨 **Кастомные роли**
-`!купитьроль "Название" #Цвет` - Персональная роль ({CUSTOM_ROLE_PRICE} кредитов)
+🎨 Кастомные роли
+!купитьроль "Название" #Цвет - Персональная роль ({CUSTOM_ROLE_PRICE} кредитов)
 
-🏷 **Премиум-роли** (появляются в топе участников)
-`!купитьпремиум золотой` - Золотая роль (5000 кредитов)
-`!купитьпремиум платиновый` - Платиновая роль (10000 кредитов)
+🏷 Премиум-роли (появляются в топе участников)
+!купитьпремиум золотой - Золотая роль (5000 кредитов)
+!купитьпремиум платиновый - Платиновая роль (10000 кредитов)
 
-🎁 **Бустеры доходов**
-`!бустер фарма` - +50% к фарму на 24 часа (1500 кредитов)
-`!бустер рулетки` - +25% к шансу выигрыша на 12 часов (2000 кредитов)
+🎁 Бустеры доходов
+!бустер фарма - +50% к фарму на 24 часа (1500 кредитов)
+!бустер рулетки - +25% к шансу выигрыша на 12 часов (2000 кредитов)
 
-💼 **Бизнес-лицензии** (пассивный доход)
-`!купитьлицензию малый` - Малый бизнес (+100 кредитов/час, 8000 кредитов)
-`!купитьлицензию средний` - Средний бизнес (+250 кредитов/час, 15000 кредитов)
-`!купитьлицензию крупный` - Крупный бизнес (+500 кредитов/час, 30000 кредитов)
+💼 Бизнес-лицензии (пассивный доход)
+!купитьлицензию малый - Малый бизнес (+100 кредитов/час, 8000 кредитов)
+!купитьлицензию средний - Средний бизнес (+250 кредитов/час, 15000 кредитов)
+!купитьлицензию крупный - Крупный бизнес (+500 кредитов/час, 30000 кредитов)
 
-🎯 **Особые возможности**
-`!сменитьник "новый ник"` - Смена ника на сервере (3000 кредитов)
-`!анонс текст` - Отправить объявление в спец. канал (5000 кредитов)
+🎯 Особые возможности
+!сменитьник "новый ник" - Смена ника на сервере (3000 кредитов)
+!анонс текст - Отправить объявление в спец. канал (5000 кредитов)
 
-💰 **Ваш баланс:** {balance} кредитов
+💰 Ваш баланс: {balance} кредитов
 
-**Примеры:**
-`!купитьроль "Богач" #ff0000`
-`!бустер фарма`
-`!купитьлицензию малый`
+Примеры:
+!купитьроль "Богач" #ff0000
+!бустер фарма
+!купитьлицензию малый
 """
         await ctx.send(shop_text)
 
@@ -372,7 +373,7 @@ class Economy(commands.Cog):
             
             await ctx.send(f"✅ {user.mention}, вы успешно купили роль {new_role.mention} за {CUSTOM_ROLE_PRICE} кредитов!")
         except ValueError:
-            await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: `#ff0000`")
+            await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: #ff0000")
         except Exception as e:
             print(f"Ошибка при создании роли: {e}")
             await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
@@ -578,40 +579,40 @@ class Economy(commands.Cog):
         elif outcome == "jackpot":
             win_amount = bet * 5
             await update_balance(ctx.author.id, win_amount)
-            await ctx.send(f"💰 **ДЖЕКПОТ!** {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
+            await ctx.send(f"💰 ДЖЕКПОТ! {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
         elif outcome == "lose":
             await update_balance(ctx.author.id, -bet)
             await ctx.send(f"💀 {ctx.author.mention} проиграл {bet} кредитов...{' 🚀' if has_roulette_booster else ''}")
         else:
             await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
-
-    @commands.command(name="помощь", aliases=["help", "хелп"])
+        
+        @commands.command(name="помощь")
     async def help_command(self, ctx):
         try:
             help_text = """
-📜 **Команды бота:**
+📜 Команды бота:
 
-🔰 **Основные**
+🔰 Основные
 🔴 !славанн — попытка стать Патриотом (2ч кд)
 🌾 !фарм — заработать кредиты (20м кд, только для Патриотов)  
 💰 !баланс — показать баланс (5с кд)
 🎁 !ежедневный — ежедневная награда (24ч кд)
 
-💸 **Экономика**
+💸 Экономика
 💸 !перевести @юзер сумма — перевод кредитов
 🎰 !рулетка ставка — игра в рулетку (30с кд)
 🏆 !топ — топ-10 по балансу (5с кд)
 
-🛍 **Магазин** 
+🛍 Магазин 
 🛍 !магазин — просмотреть магазин
 🎨 !купитьроль "Название" #Цвет — кастомная роль (2000к)
-⭐ !купитьпремиум тип — премиум-роль (5000-10000к)
+⭐️ !купитьпремиум тип — премиум-роль (5000-10000к)
 🚀 !бустер тип — бустеры доходов (1500-2000к)
 💼 !купитьлицензию тип — бизнес-лицензии (8000-30000к)
 📝 !сменитьник "ник" — сменить ник (3000к)
 📢 !анонс текст — отправить объявление (5000к)
 
-👥 **Кланы**
+👥 Кланы
 👥 !создатьклан название — создать клан (5000к)
 👥 !войтивклан название — вступить в клан
 👥 !покинутьклан — покинуть клан
@@ -620,12 +621,12 @@ class Economy(commands.Cog):
 💵 !внести_клан сумма — внести в казну
 💸 !снять_клан сумма — снять из казны (владелец)
 
-👤 **Профиль**
+👤 Профиль
 👤 !профиль [@юзер] — посмотреть профиль
 📝 !описание_профиль текст — изменить описание
 🔄 !сбросить_описание — сбросить описание
 
-🎮 **Развлечения**
+🎮 Развлечения
 🎲 !рандом [min] [max] — случайное число
 🎯 !орёл — подбросить монетку
 🤔 !выбор вариант1, вариант2 — случайный выбор
@@ -634,14 +635,14 @@ class Economy(commands.Cog):
 📚 !викторина — случайная викторина
 🎭 !кто вопрос — случайный участник
 
-🛡 **Модерация**
+🛡 Модерация
 🔇 !мут @участник [время] [причина] — замутить
 🔊 !размут @участник — размутить
 🧹 !очистить [кол-во] — очистить чат
 👢 !кик @участник [причина] — кикнуть
 🔨 !бан @участник [причина] — забанить
 
-⚙️ **Админ-команды**
+⚙️ Админ-команды
 ➕ !допкредит @юзер сумма — добавить кредиты
 ➖ !минускредит @юзер сумма — снять кредиты
 
@@ -654,7 +655,7 @@ class Economy(commands.Cog):
 
 # ==================== КЛАНЫ ====================
 class Clans(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     async def get_clan_members(self, clan_name: str):
@@ -703,8 +704,7 @@ class Clans(commands.Cog):
         
         await update_balance(user.id, -CLAN_CREATION_PRICE)
         await ctx.send(f"✅ Клан '{clan_name}' создан! Вы стали лидером.")
-
-    @commands.command(name="войтивклан")
+        @commands.command(name="войтивклан")
     async def join_clan(self, ctx, clan_name: str):
         user = ctx.author
         
@@ -811,7 +811,7 @@ class Clans(commands.Cog):
         leaderboard = []
         for i, clan in enumerate(top_clans, start=1):
             member_count = await self.get_clan_member_count(clan['name'])
-            leaderboard.append(f"{i}. **{clan['name']}** — {clan['balance']}к | {member_count}/{clan['member_slots']} чел.")
+            leaderboard.append(f"{i}. {clan['name']} — {clan['balance']}к | {member_count}/{clan['member_slots']} чел.")
         
         embed = discord.Embed(
             title="🏆 Топ кланов по казне",
@@ -877,7 +877,7 @@ class Clans(commands.Cog):
 
 # ==================== ПРОФИЛЬ ====================
 class Profile(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     @commands.command(name="профиль")
@@ -945,7 +945,7 @@ class Profile(commands.Cog):
 
 # ==================== РАЗВЛЕЧЕНИЯ ====================
 class Fun(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     @commands.command(name="рандом")
@@ -954,12 +954,12 @@ class Fun(commands.Cog):
             min_num, max_num = max_num, min_num
         
         result = random.randint(min_num, max_num)
-        await ctx.send(f"🎲 {ctx.author.mention}, случайное число: **{result}** (от {min_num} до {max_num})")
+        await ctx.send(f"🎲 {ctx.author.mention}, случайное число: {result} (от {min_num} до {max_num})")
 
     @commands.command(name="орёл")
     async def coin_flip(self, ctx):
         result = random.choice(["Орёл 🦅", "Решка 🪙"])
-        await ctx.send(f"🎯 {ctx.author.mention}, результат: **{result}**!")
+        await ctx.send(f"🎯 {ctx.author.mention}, результат: {result}!")
 
     @commands.command(name="выбор")
     async def choose(self, ctx, *, options: str):
@@ -970,7 +970,7 @@ class Fun(commands.Cog):
             return
         
         chosen = random.choice(options_list)
-        await ctx.send(f"🤔 {ctx.author.mention}, я выбираю: **{chosen}**!")
+        await ctx.send(f"🤔 {ctx.author.mention}, я выбираю: {chosen}!")
 
     @commands.command(name="шар")
     async def magic_ball(self, ctx, *, question: str):
@@ -1036,14 +1036,14 @@ class Fun(commands.Cog):
         
         embed.add_field(
             name="Результат",
-            value=f"**| {result[0]} | {result[1]} | {result[2]} |**",
+            value=f"| {result[0]} | {result[1]} | {result[2]} |",
             inline=False
         )
         
         if win_amount > 0:
             if multiplier == 10:
                 embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
-            else:
+        else:
                 embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
         else:
             embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
@@ -1131,7 +1131,7 @@ class Fun(commands.Cog):
 
 # ==================== МОДЕРАЦИЯ ====================
 class Mod(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     def is_admin(self, member):
@@ -1245,7 +1245,7 @@ class Mod(commands.Cog):
         await asyncio.sleep(5)
         await message.delete()
 
-    @commands.command(name="кик")
+        @commands.command(name="кик")
     async def kick(self, ctx, member: discord.Member, *, reason: str = "Не указана"):
         if not self.is_admin(ctx.author):
             await ctx.send("❌ Эта команда доступна только для администраторов!")
@@ -1307,12 +1307,24 @@ class Mod(commands.Cog):
 
 # ==================== СОБЫТИЯ ====================
 class Events(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("✅ Бот готов к работе!")
+        print("=" * 50)
+        print(f"🤖 Бот: {self.bot.user.name}")
+        print(f"🆔 ID: {self.bot.user.id}")
+        print(f"📡 Серверов: {len(self.bot.guilds)}")
+        print("=" * 50)
+
+    @commands.Cog.listener()
+    async def on_disconnect(self):
+        print("🔌 Бот отключен от Discord")
+
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        print("🔁 Соединение с Discord восстановлено")
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
@@ -1328,8 +1340,10 @@ class Events(commands.Cog):
             await ctx.send(f"⏳ Подождите {time_str} перед использованием команды.")
         elif isinstance(error, commands.CommandNotFound):
             pass
+        elif isinstance(error, commands.BotMissingPermissions):
+            await ctx.send("❌ У бота недостаточно прав для выполнения этой команды!")
         else:
-            print(f"⚠ Ошибка: {error}")
+            print(f"⚠️ Ошибка в команде {ctx.command}: {error}")
 
 # ==================== ЗАПУСК БОТА ====================
 async def setup_bot():
@@ -1344,22 +1358,47 @@ async def setup_bot():
         print("✅ Все коги загружены")
     except Exception as e:
         print(f"❌ Ошибка при настройке бота: {e}")
-        await bot.close()
+        raise e
 
-@bot.event
-async def on_ready():
-    print("=" * 50)
-    print(f"🤖 Бот: {bot.user.name}")
-    print(f"🆔 ID: {bot.user.id}")
-    print(f"📡 Серверов: {len(bot.guilds)}")
-    print("=" * 50)
+async def close_bot():
+    """Корректное закрытие бота"""
+    print("🔄 Завершаем работу бота...")
+    try:
+        if hasattr(bot, 'db') and bot.db:
+            await bot.db.close()
+            print("✅ Пул соединений с БД закрыт")
+        await bot.close()
+        print("✅ Соединение с Discord закрыто")
+    except Exception as e:
+        print(f"⚠️ Ошибка при закрытии: {e}")
 
 async def main():
+    # Регистрируем обработчики сигналов
+    def signal_handler(signum, frame):
+        print(f"📡 Получен сигнал завершения")
+        asyncio.create_task(close_bot())
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     keep_alive()
-    await asyncio.sleep(2)
     await setup_bot()
     print("🚀 Запускаем Discord бота...")
-    await bot.start(TOKEN)
+    
+    try:
+        await bot.start(TOKEN)
+    except KeyboardInterrupt:
+        print("⏹ Остановка по запросу пользователя...")
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
+    finally:
+        await close_bot()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if name == 'main':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("👋 До свидания!")
+    except Exception as e:
+        print(f"❌ Фатальная ошибка: {e}")
+        sys.exit(1)
