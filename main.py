@@ -1399,7 +1399,7 @@ async def main():
     finally:
         await close_bot()
 
-if name == 'main':
+if __name__ == 'main':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
