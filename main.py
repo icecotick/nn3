@@ -1246,7 +1246,7 @@ class Mod(commands.Cog):
         await asyncio.sleep(5)
         await message.delete()
 
-        @commands.command(name="кик")
+    @commands.command(name="кик")
     async def kick(self, ctx, member: discord.Member, *, reason: str = "Не указана"):
         if not self.is_admin(ctx.author):
             await ctx.send("❌ Эта команда доступна только для администраторов!")
