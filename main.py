@@ -304,7 +304,7 @@ class Economy(commands.Cog):
             await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
 
     # КОМАНДА ПОМОЩЬ - ИСПРАВЛЕННАЯ
-    @commands.command(name="помощь", aliases=["help", "хелп"])
+    @commands.command(name="помощь")
     async def help_command(self, ctx):
         try:
             help_text = """
