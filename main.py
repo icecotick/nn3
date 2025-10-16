@@ -6,6 +6,8 @@ import os
 import asyncpg
 import asyncio
 from datetime import datetime, timedelta
+from flask import Flask
+from threading import Thread
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -36,12 +38,37 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ==================== FLASK СЕРВЕР ====================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Бот активен! 🤖"
+
+@app.route('/health')
+def health():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+def run_flask():
+    try:
+        app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"❌ Ошибка Flask: {e}")
+
+def keep_alive():
+    try:
+        flask_thread = Thread(target=run_flask)
+        flask_thread.daemon = True
+        flask_thread.start()
+        print("✅ Веб-сервер запущен на порту 8080")
+    except Exception as e:
+        print(f"❌ Ошибка при запуске веб-сервера: {e}")
+
 # ==================== БАЗА ДАННЫХ ====================
 async def create_db_pool():
     try:
         pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
         async with pool.acquire() as conn:
-            # Таблица пользователей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -55,7 +82,6 @@ async def create_db_pool():
                     last_business_claim TIMESTAMP
                 )
             """)
-            # Таблица кастомных ролей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS custom_roles (
                     user_id BIGINT PRIMARY KEY,
@@ -64,7 +90,6 @@ async def create_db_pool():
                     role_color TEXT
                 )
             """)
-            # Таблица кланов
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS clans (
                     name TEXT PRIMARY KEY,
@@ -74,14 +99,12 @@ async def create_db_pool():
                     income_multiplier DECIMAL DEFAULT 1.0
                 )
             """)
-            # Таблица связи пользователей и кланов
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS user_clans (
                     user_id BIGINT PRIMARY KEY,
                     clan_name TEXT
                 )
             """)
-            # Таблица премиум ролей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS premium_roles (
                     user_id BIGINT PRIMARY KEY,
@@ -94,7 +117,6 @@ async def create_db_pool():
         print(f"❌ Ошибка базы данных: {e}")
         exit(1)
 
-# Базовые функции работы с БД
 async def get_balance(user_id: int):
     async with bot.db.acquire() as conn:
         result = await conn.fetchrow("SELECT balance FROM users WHERE user_id = $1", user_id)
@@ -111,6 +133,34 @@ async def get_user_data(user_id: int):
     async with bot.db.acquire() as conn:
         return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
 
+async def get_user_clan(user_id: int):
+    async with bot.db.acquire() as conn:
+        return await conn.fetchval("SELECT clan_name FROM user_clans WHERE user_id = $1", user_id)
+
+async def get_custom_role(user_id: int):
+    async with bot.db.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM custom_roles WHERE user_id = $1", user_id)
+
+async def create_custom_role(user_id: int, role_id: int, role_name: str, role_color: str):
+    async with bot.db.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO custom_roles (user_id, role_id, role_name, role_color)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id) DO UPDATE SET
+            role_id = $2, role_name = $3, role_color = $4
+        """, user_id, role_id, role_name, role_color)
+
+async def get_profile_description(user_id: int):
+    async with bot.db.acquire() as conn:
+        result = await conn.fetchrow("SELECT profile_description FROM users WHERE user_id = $1", user_id)
+        return result["profile_description"] if result and result["profile_description"] else "Описание отсутствует"
+
+async def update_profile_description(user_id: int, description: str):
+    async with bot.db.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO users (user_id, profile_description) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET profile_description = $2
+        """, user_id, description)
 
 # ==================== ЭКОНОМИКА ====================
 class Economy(commands.Cog):
@@ -120,7 +170,6 @@ class Economy(commands.Cog):
     def is_admin(self, member):
         return any(role.name.lower() in [r.lower() for r in ADMIN_ROLES] for role in member.roles)
 
-    # ========== ОСНОВНЫЕ КОМАНДЫ ==========
     @commands.command(name="славанн")
     @commands.cooldown(1, 7200, commands.BucketType.user)
     async def slav_party(self, ctx):
@@ -163,12 +212,11 @@ class Economy(commands.Cog):
             await ctx.send("⛔ Эта команда доступна только для Патриотов.")
             return
 
-        # Проверка бустера фарма
         user_data = await get_user_data(user.id)
         base_reward = random.randint(30, 70)
         
         if user_data and user_data['farm_booster_until'] and user_data['farm_booster_until'] > datetime.now():
-            reward = int(base_reward * 1.5)  # +50% с бустером
+            reward = int(base_reward * 1.5)
             booster_text = " 🚀 (с бустером)"
         else:
             reward = base_reward
@@ -221,7 +269,6 @@ class Economy(commands.Cog):
 
         await ctx.send("🏆 **Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
 
-    # ========== АДМИН КОМАНДЫ ==========
     @commands.command(name="допкредит")
     async def add_credits(self, ctx, member: discord.Member, amount: int):
         if not self.is_admin(ctx.author):
@@ -255,83 +302,6 @@ class Economy(commands.Cog):
         new_balance = await get_balance(member.id)
         await ctx.send(f"✅ Администратор {ctx.author.mention} снял {amount} кредитов у пользователя {member.mention}\n💰 Новый баланс: {new_balance} кредитов")
 
-    # ========== ЕЖЕДНЕВНАЯ НАГРАДА ==========
-    @commands.command(name="ежедневный")
-    @commands.cooldown(1, 86400, commands.BucketType.user)
-    async def daily(self, ctx):
-        user_data = await get_user_data(ctx.author.id)
-        streak = 1
-        
-        # Проверка стрика ежедневных наград
-        if user_data and user_data['daily_claimed']:
-            last_claim = user_data['daily_claimed']
-            if datetime.now() - last_claim < timedelta(hours=48):
-                # Пользователь забирает награду вовремя
-                streak = 2  # Можно добавить логику для большего стрика
-            else:
-                # Стрик сброшен
-                streak = 1
-
-        base_reward = random.randint(100, 500)
-        reward = base_reward * streak
-        
-        await update_balance(ctx.author.id, reward)
-        
-        # Обновляем время получения ежедневной награды
-        async with bot.db.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO users (user_id, daily_claimed) VALUES ($1, $2)
-                ON CONFLICT (user_id) DO UPDATE SET daily_claimed = $2
-            """, ctx.author.id, datetime.now())
-        
-        if streak > 1:
-            await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов (стрик x{streak})!")
-        else:
-            await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов!")
-
-    # ========== РУЛЕТКА ==========
-    @commands.command(name="рулетка")
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def roulette(self, ctx, bet: int):
-        if bet <= 0:
-            await ctx.send("❌ Ставка должна быть положительной!")
-            return
-
-        balance = await get_balance(ctx.author.id)
-        if balance < bet:
-            await ctx.send("❌ Недостаточно кредитов!")
-            return
-
-        # Проверка бустера рулетки
-        user_data = await get_user_data(ctx.author.id)
-        has_roulette_booster = user_data and user_data['roulette_booster_until'] and user_data['roulette_booster_until'] > datetime.now()
-        
-        if has_roulette_booster:
-            # С бустером шансы лучше
-            outcomes = ["win", "win", "lose", "jackpot", "refund"]
-            weights = [30, 25, 20, 5, 20]
-        else:
-            # Обычные шансы
-            outcomes = ["win", "lose", "refund"]
-            weights = [40, 40, 20]
-
-        outcome = random.choices(outcomes, weights=weights)[0]
-
-        if outcome == "win":
-            win_amount = bet * 2
-            await update_balance(ctx.author.id, win_amount)
-            await ctx.send(f"🎉 {ctx.author.mention} выиграл {win_amount} кредитов!{' 🚀' if has_roulette_booster else ''}")
-        elif outcome == "jackpot":
-            win_amount = bet * 5
-            await update_balance(ctx.author.id, win_amount)
-            await ctx.send(f"💰 **ДЖЕКПОТ!** {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
-        elif outcome == "lose":
-            await update_balance(ctx.author.id, -bet)
-            await ctx.send(f"💀 {ctx.author.mention} проиграл {bet} кредитов...{' 🚀' if has_roulette_booster else ''}")
-        else:
-            await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
-
-    # ========== МАГАЗИН И ТОВАРЫ ==========
     @commands.command(name="магазин")
     async def shop(self, ctx):
         balance = await get_balance(ctx.author.id)
@@ -377,10 +347,7 @@ class Economy(commands.Cog):
             await ctx.send(f"❌ Недостаточно средств! Нужно {CUSTOM_ROLE_PRICE} кредитов, у вас {balance}.")
             return
         
-        # Проверяем существующую кастомную роль
-        async with bot.db.acquire() as conn:
-            existing_role = await conn.fetchrow("SELECT * FROM custom_roles WHERE user_id = $1", user.id)
-        
+        existing_role = await get_custom_role(user.id)
         if existing_role:
             try:
                 old_role = ctx.guild.get_role(existing_role['role_id'])
@@ -397,29 +364,13 @@ class Economy(commands.Cog):
                 reason=f"Кастомная роль для {user.name}"
             )
             
-            # Устанавливаем позицию роли (выше обычных ролей)
-            positions = {role: role.position for role in ctx.guild.roles}
-            target_position = max(positions.values()) - 5  # На 5 позиций ниже самой верхней
-            
-            await new_role.edit(position=target_position)
             await user.add_roles(new_role)
-            
-            # Сохраняем в БД
-            async with bot.db.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO custom_roles (user_id, role_id, role_name, role_color)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (user_id) DO UPDATE SET
-                    role_id = $2, role_name = $3, role_color = $4
-                """, user.id, new_role.id, role_name, role_color)
-            
+            await create_custom_role(user.id, new_role.id, role_name, role_color)
             await update_balance(user.id, -CUSTOM_ROLE_PRICE)
-            await ctx.send(f"✅ {user.mention}, вы успешно купили роль {new_role.mention} за {CUSTOM_ROLE_PRICE} кредитов!")
             
+            await ctx.send(f"✅ {user.mention}, вы успешно купили роль {new_role.mention} за {CUSTOM_ROLE_PRICE} кредитов!")
         except ValueError:
             await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: `#ff0000`")
-        except discord.Forbidden:
-            await ctx.send("❌ У бота нет прав для создания ролей!")
         except Exception as e:
             print(f"Ошибка при создании роли: {e}")
             await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
@@ -446,20 +397,18 @@ class Economy(commands.Cog):
         
         role_name = f"{role_type.capitalize()} Патриот"
         
-        # Создаем или находим роль
         existing_role = discord.utils.get(ctx.guild.roles, name=role_name)
         if not existing_role:
             existing_role = await ctx.guild.create_role(
                 name=role_name,
                 color=role_data["color"],
-                hoist=True,  # Показывать отдельно в списке участников
+                hoist=True,
                 reason="Премиум роль из магазина"
             )
         
         await user.add_roles(existing_role)
         await update_balance(user.id, -role_data["price"])
         
-        # Сохраняем в БД
         async with bot.db.acquire() as conn:
             await conn.execute("""
                 INSERT INTO premium_roles (user_id, role_type) VALUES ($1, $2)
@@ -474,8 +423,8 @@ class Economy(commands.Cog):
         balance = await get_balance(user.id)
         
         boosters = {
-            "фарма": {"price": 1500, "duration": 86400, "multiplier": 1.5},  # 24 часа
-            "рулетки": {"price": 2000, "duration": 43200, "multiplier": 1.25}  # 12 часов
+            "фарма": {"price": 1500, "duration": 86400},
+            "рулетки": {"price": 2000, "duration": 43200}
         }
         
         booster_type = booster_type.lower()
@@ -488,7 +437,6 @@ class Economy(commands.Cog):
             await ctx.send(f"❌ Недостаточно средств! Нужно {booster_data['price']} кредитов.")
             return
         
-        # Активируем бустер
         booster_until = datetime.now() + timedelta(seconds=booster_data["duration"])
         
         async with bot.db.acquire() as conn:
@@ -497,14 +445,13 @@ class Economy(commands.Cog):
                     INSERT INTO users (user_id, farm_booster_until) VALUES ($1, $2)
                     ON CONFLICT (user_id) DO UPDATE SET farm_booster_until = $2
                 """, user.id, booster_until)
-            else:  # рулетки
+            else:
                 await conn.execute("""
                     INSERT INTO users (user_id, roulette_booster_until) VALUES ($1, $2)
                     ON CONFLICT (user_id) DO UPDATE SET roulette_booster_until = $2
                 """, user.id, booster_until)
         
         await update_balance(user.id, -booster_data["price"])
-        
         hours = booster_data["duration"] // 3600
         await ctx.send(f"🚀 {user.mention}, вы активировали бустер {booster_type} на {hours} часов!")
 
@@ -529,7 +476,6 @@ class Economy(commands.Cog):
             await ctx.send(f"❌ Недостаточно средств! Нужно {license_data['price']} кредитов.")
             return
         
-        # Покупаем лицензию
         async with bot.db.acquire() as conn:
             await conn.execute("""
                 INSERT INTO users (user_id, business_license, business_income, last_business_claim) 
@@ -572,11 +518,6 @@ class Economy(commands.Cog):
             await ctx.send(f"❌ Недостаточно средств! Нужно {price} кредитов.")
             return
         
-        # Ищем канал для анонсов
-        announcement_channel = discord.utils.get(ctx.guild.text_channels, name="анонсы")
-        if not announcement_channel:
-            announcement_channel = ctx.channel
-        
         embed = discord.Embed(
             title="📢 Объявление от сообщества",
             description=announcement,
@@ -586,12 +527,63 @@ class Economy(commands.Cog):
         embed.set_author(name=user.display_name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
         embed.set_footer(text="Купить размещение: !анонс текст")
         
-        await announcement_channel.send(embed=embed)
+        await ctx.send(embed=embed)
         await update_balance(user.id, -price)
         await ctx.send(f"✅ {user.mention}, ваше объявление опубликовано!")
 
-    # ========== КОМАНДА ПОМОЩИ ==========
-    @commands.command(name="помощь")
+    @commands.command(name="ежедневный")
+    @commands.cooldown(1, 86400, commands.BucketType.user)
+    async def daily(self, ctx):
+        reward = random.randint(100, 500)
+        await update_balance(ctx.author.id, reward)
+        
+        async with bot.db.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO users (user_id, daily_claimed) VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET daily_claimed = $2
+            """, ctx.author.id, datetime.now())
+        
+        await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов!")
+
+    @commands.command(name="рулетка")
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def roulette(self, ctx, bet: int):
+        if bet <= 0:
+            await ctx.send("❌ Ставка должна быть положительной!")
+            return
+
+        balance = await get_balance(ctx.author.id)
+        if balance < bet:
+            await ctx.send("❌ Недостаточно кредитов!")
+            return
+
+        user_data = await get_user_data(ctx.author.id)
+        has_roulette_booster = user_data and user_data['roulette_booster_until'] and user_data['roulette_booster_until'] > datetime.now()
+        
+        if has_roulette_booster:
+            outcomes = ["win", "win", "lose", "jackpot", "refund"]
+            weights = [30, 25, 20, 5, 20]
+        else:
+            outcomes = ["win", "lose", "refund"]
+            weights = [40, 40, 20]
+
+        outcome = random.choices(outcomes, weights=weights)[0]
+
+        if outcome == "win":
+            win_amount = bet * 2
+            await update_balance(ctx.author.id, win_amount)
+            await ctx.send(f"🎉 {ctx.author.mention} выиграл {win_amount} кредитов!{' 🚀' if has_roulette_booster else ''}")
+        elif outcome == "jackpot":
+            win_amount = bet * 5
+            await update_balance(ctx.author.id, win_amount)
+            await ctx.send(f"💰 **ДЖЕКПОТ!** {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
+        elif outcome == "lose":
+            await update_balance(ctx.author.id, -bet)
+            await ctx.send(f"💀 {ctx.author.mention} проиграл {bet} кредитов...{' 🚀' if has_roulette_booster else ''}")
+        else:
+            await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
+
+    @commands.command(name="помощь", aliases=["help", "хелп"])
     async def help_command(self, ctx):
         try:
             help_text = """
@@ -620,11 +612,32 @@ class Economy(commands.Cog):
 👥 **Кланы**
 👥 !создатьклан название — создать клан (5000к)
 👥 !войтивклан название — вступить в клан
+👥 !покинутьклан — покинуть клан
+👥 !клан [название] — информация о клане
 🏆 !клантоп — топ кланов
+💵 !внести_клан сумма — внести в казну
+💸 !снять_клан сумма — снять из казны (владелец)
 
 👤 **Профиль**
 👤 !профиль [@юзер] — посмотреть профиль
 📝 !описание_профиль текст — изменить описание
+🔄 !сбросить_описание — сбросить описание
+
+🎮 **Развлечения**
+🎲 !рандом [min] [max] — случайное число
+🎯 !орёл — подбросить монетку
+🤔 !выбор вариант1, вариант2 — случайный выбор
+🎱 !шар вопрос — магический шар
+🎰 !слоты [ставка] — игровые автоматы
+📚 !викторина — случайная викторина
+🎭 !кто вопрос — случайный участник
+
+🛡 **Модерация**
+🔇 !мут @участник [время] [причина] — замутить
+🔊 !размут @участник — размутить
+🧹 !очистить [кол-во] — очистить чат
+👢 !кик @участник [причина] — кикнуть
+🔨 !бан @участник [причина] — забанить
 
 ⚙️ **Админ-команды**
 ➕ !допкредит @юзер сумма — добавить кредиты
@@ -637,7 +650,6 @@ class Economy(commands.Cog):
             print(f"Ошибка в команде помощь: {e}")
             await ctx.send("Произошла ошибка при выполнении команды")
 
-# ЗАКРЫВАЕМ КЛАСС ECONOMY
 # ==================== КЛАНЫ ====================
 class Clans(commands.Cog):
     def __init__(self, bot):
@@ -665,7 +677,6 @@ class Clans(commands.Cog):
             await ctx.send("❌ Вы уже состоите в клане!")
             return
         
-        # Проверяем имя клана
         if len(clan_name) > 20:
             await ctx.send("❌ Название клана не должно превышать 20 символов!")
             return
@@ -679,7 +690,6 @@ class Clans(commands.Cog):
                 await ctx.send("❌ Клан с таким именем уже существует!")
                 return
             
-            # Создаем клан
             await conn.execute(
                 "INSERT INTO clans (name, owner_id, balance) VALUES ($1, $2, $3)",
                 clan_name, user.id, 0
@@ -702,19 +712,16 @@ class Clans(commands.Cog):
             return
         
         async with bot.db.acquire() as conn:
-            # Проверяем существование клана
             clan = await conn.fetchrow("SELECT * FROM clans WHERE name = $1", clan_name)
             if not clan:
                 await ctx.send("❌ Такого клана не существует!")
                 return
             
-            # Проверяем количество участников
             member_count = await self.get_clan_member_count(clan_name)
             if member_count >= clan['member_slots']:
                 await ctx.send("❌ В клане нет свободных мест!")
                 return
             
-            # Вступаем в клан
             await conn.execute(
                 "INSERT INTO user_clans (user_id, clan_name) VALUES ($1, $2)",
                 user.id, clan_name
@@ -732,7 +739,6 @@ class Clans(commands.Cog):
             return
         
         async with bot.db.acquire() as conn:
-            # Проверяем, является ли пользователь владельцем
             clan_owner = await conn.fetchval("SELECT owner_id FROM clans WHERE name = $1", current_clan)
             if clan_owner == user.id:
                 await ctx.send("❌ Владелец клана не может его покинуть! Сначала передайте ownership.")
@@ -745,7 +751,6 @@ class Clans(commands.Cog):
     @commands.command(name="клан")
     async def clan_info(self, ctx, clan_name: str = None):
         if not clan_name:
-            # Показываем информацию о своем клане
             user_clan = await get_user_clan(ctx.author.id)
             if not user_clan:
                 await ctx.send("❌ Вы не состоите в клане! Укажите название клана.")
@@ -777,7 +782,6 @@ class Clans(commands.Cog):
         embed.add_field(name="👥 Участники", value=f"{member_count}/{clan['member_slots']}", inline=True)
         embed.add_field(name="📈 Множитель дохода", value=f"x{clan['income_multiplier']}", inline=True)
         
-        # Список участников (первые 10)
         member_list = []
         for i, member in enumerate(members[:10], 1):
             try:
@@ -832,7 +836,6 @@ class Clans(commands.Cog):
             await ctx.send("❌ Недостаточно средств!")
             return
         
-        # Переводим средства в казну клана
         await update_balance(user.id, -amount)
         async with bot.db.acquire() as conn:
             await conn.execute(
@@ -852,7 +855,6 @@ class Clans(commands.Cog):
             return
         
         async with bot.db.acquire() as conn:
-            # Проверяем, является ли пользователь владельцем
             clan_owner = await conn.fetchval("SELECT owner_id FROM clans WHERE name = $1", clan_name)
             if clan_owner != user.id:
                 await ctx.send("❌ Только владелец клана может снимать средства!")
@@ -863,7 +865,6 @@ class Clans(commands.Cog):
                 await ctx.send("❌ В казне клана недостаточно средств!")
                 return
             
-            # Снимаем средства
             await conn.execute(
                 "UPDATE clans SET balance = balance - $1 WHERE name = $2",
                 amount, clan_name
@@ -877,33 +878,16 @@ class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    async def get_profile_description(self, user_id: int):
-        async with bot.db.acquire() as conn:
-            result = await conn.fetchrow("SELECT profile_description FROM users WHERE user_id = $1", user_id)
-            return result["profile_description"] if result and result["profile_description"] else "Описание отсутствует"
-
-    async def update_profile_description(self, user_id: int, description: str):
-        async with bot.db.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO users (user_id, profile_description) VALUES ($1, $2)
-                ON CONFLICT (user_id) DO UPDATE SET profile_description = $2
-            """, user_id, description)
-
-    async def get_user_clan(self, user_id: int):
-        async with bot.db.acquire() as conn:
-            return await conn.fetchval("SELECT clan_name FROM user_clans WHERE user_id = $1", user_id)
-
     @commands.command(name="профиль")
     async def profile(self, ctx, member: discord.Member = None):
         if not member:
             member = ctx.author
         
         balance = await get_balance(member.id)
-        clan = await self.get_user_clan(member.id)
-        description = await self.get_profile_description(member.id)
+        clan = await get_user_clan(member.id)
+        description = await get_profile_description(member.id)
         user_data = await get_user_data(member.id)
         
-        # Собираем статистику
         embed = discord.Embed(
             title=f"📊 Профиль {member.display_name}",
             color=member.color
@@ -912,16 +896,13 @@ class Profile(commands.Cog):
         avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
         embed.set_thumbnail(url=avatar_url)
         
-        # Основная информация
         embed.add_field(name="💰 Баланс", value=f"{balance} кредитов", inline=True)
         embed.add_field(name="👥 Клан", value=clan if clan else "Нет клана", inline=True)
         
-        # Бизнес информация
         if user_data and user_data['business_license']:
             business_info = f"{user_data['business_license'].capitalize()} бизнес\n+{user_data['business_income']}/час"
             embed.add_field(name="💼 Бизнес", value=business_info, inline=True)
         
-        # Активные бустеры
         boosters = []
         if user_data and user_data['farm_booster_until'] and user_data['farm_booster_until'] > datetime.now():
             time_left = user_data['farm_booster_until'] - datetime.now()
@@ -936,10 +917,8 @@ class Profile(commands.Cog):
         if boosters:
             embed.add_field(name="🚀 Бустеры", value="\n".join(boosters), inline=True)
         
-        # Описание профиля
         embed.add_field(name="📝 Описание", value=description, inline=False)
         
-        # Дополнительная информация
         join_date = member.joined_at.strftime("%d.%m.%Y") if member.joined_at else "Неизвестно"
         embed.add_field(name="📅 На сервере с", value=join_date, inline=True)
         embed.add_field(name="🆔 ID", value=member.id, inline=True)
@@ -954,13 +933,199 @@ class Profile(commands.Cog):
             await ctx.send("❌ Описание не должно превышать 200 символов!")
             return
         
-        await self.update_profile_description(ctx.author.id, description)
+        await update_profile_description(ctx.author.id, description)
         await ctx.send("✅ Описание профиля обновлено!")
 
     @commands.command(name="сбросить_описание")
     async def reset_profile_description(self, ctx):
-        await self.update_profile_description(ctx.author.id, "")
+        await update_profile_description(ctx.author.id, "")
         await ctx.send("✅ Описание профиля сброшено!")
+
+# ==================== РАЗВЛЕЧЕНИЯ ====================
+class Fun(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="рандом")
+    async def random_num(self, ctx, min_num: int = 1, max_num: int = 100):
+        if min_num > max_num:
+            min_num, max_num = max_num, min_num
+        
+        result = random.randint(min_num, max_num)
+        await ctx.send(f"🎲 {ctx.author.mention}, случайное число: **{result}** (от {min_num} до {max_num})")
+
+    @commands.command(name="орёл")
+    async def coin_flip(self, ctx):
+        result = random.choice(["Орёл 🦅", "Решка 🪙"])
+        await ctx.send(f"🎯 {ctx.author.mention}, результат: **{result}**!")
+
+    @commands.command(name="выбор")
+    async def choose(self, ctx, *, options: str):
+        options_list = [opt.strip() for opt in options.split(",") if opt.strip()]
+        
+        if len(options_list) < 2:
+            await ctx.send("❌ Укажите хотя бы 2 варианта через запятую!")
+            return
+        
+        chosen = random.choice(options_list)
+        await ctx.send(f"🤔 {ctx.author.mention}, я выбираю: **{chosen}**!")
+
+    @commands.command(name="шар")
+    async def magic_ball(self, ctx, *, question: str):
+        answers = [
+            "Бесспорно! ✅", "Предрешено! ✅", "Никаких сомнений! ✅", "Определённо да! ✅",
+            "Можешь быть уверен в этом! ✅", "Мне кажется — «да»! 🤔", "Вероятнее всего! 👍",
+            "Хорошие перспективы! 👍", "Знаки говорят — «да»! 🔮", "Да! ✅",
+            "Пока не ясно, попробуй снова! 🔄", "Спроси позже! ⏰", "Лучше не рассказывать! 🤫",
+            "Сейчас нельзя предсказать! 🔮", "Сконцентрируйся и спроси опять! 🧘",
+            "Даже не думай! ❌", "Мой ответ — «нет»! ❌", "По моим данным — «нет»! ❌",
+            "Перспективы не очень хорошие! 👎", "Весьма сомнительно! 🤨"
+        ]
+        
+        answer = random.choice(answers)
+        embed = discord.Embed(
+            title="🎱 Магический шар",
+            color=0x7289da
+        )
+        embed.add_field(name="❓ Вопрос", value=question, inline=False)
+        embed.add_field(name="📜 Ответ", value=answer, inline=False)
+        embed.set_footer(text=f"Запросил: {ctx.author.display_name}")
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name="слоты")
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    async def slots(self, ctx, bet: int = 10):
+        if bet <= 0:
+            await ctx.send("❌ Ставка должна быть положительной!")
+            return
+
+        balance = await get_balance(ctx.author.id)
+        if balance < bet:
+            await ctx.send("❌ Недостаточно кредитов!")
+            return
+
+        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
+        result = [random.choice(symbols) for _ in range(3)]
+        
+        if result[0] == result[1] == result[2]:
+            if result[0] == "💎":
+                multiplier = 10
+            elif result[0] == "7️⃣":
+                multiplier = 5
+            else:
+                multiplier = 3
+        elif result[0] == result[1] or result[1] == result[2]:
+            multiplier = 1.5
+        else:
+            multiplier = 0
+        
+        win_amount = int(bet * multiplier)
+        
+        if win_amount > 0:
+            await update_balance(ctx.author.id, win_amount)
+        else:
+            await update_balance(ctx.author.id, -bet)
+        
+        embed = discord.Embed(
+            title="🎰 Игровые автоматы",
+            color=0xffd700 if win_amount > 0 else 0xff0000
+        )
+        
+        embed.add_field(
+            name="Результат",
+            value=f"**| {result[0]} | {result[1]} | {result[2]} |**",
+            inline=False
+        )
+        
+        if win_amount > 0:
+            if multiplier == 10:
+                embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
+            else:
+                embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
+        else:
+            embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
+        
+        embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
+        embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name="викторина")
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def quiz(self, ctx):
+        questions = [
+            {
+                "question": "Сколько планет в Солнечной системе?",
+                "options": ["8", "9", "10", "7"],
+                "answer": 0
+            },
+            {
+                "question": "Какая самая длинная река в мире?",
+                "options": ["Амазонка", "Нил", "Янцзы", "Миссисипи"],
+                "answer": 0
+            },
+            {
+                "question": "В каком году началась Вторая мировая война?",
+                "options": ["1939", "1941", "1937", "1945"],
+                "answer": 0
+            }
+        ]
+        
+        q = random.choice(questions)
+        
+        embed = discord.Embed(
+            title="📚 Викторина",
+            description=q["question"],
+            color=0x0099ff
+        )
+        
+        options_text = ""
+        for i, option in enumerate(q["options"]):
+            options_text += f"{i+1}. {option}\n"
+        
+        embed.add_field(name="Варианты:", value=options_text, inline=False)
+        embed.set_footer(text="У вас 15 секунд чтобы ответить цифрой!")
+        
+        message = await ctx.send(embed=embed)
+        
+        def check(m):
+            return m.author == ctx.author and m.channel == ctx.channel and m.content.isdigit()
+        
+        try:
+            response = await self.bot.wait_for('message', timeout=15.0, check=check)
+            user_answer = int(response.content) - 1
+            
+            if user_answer == q["answer"]:
+                reward = random.randint(50, 150)
+                await update_balance(ctx.author.id, reward)
+                await ctx.send(f"✅ Правильно! {ctx.author.mention} получает {reward} кредитов!")
+            else:
+                correct_answer = q["options"][q["answer"]]
+                await ctx.send(f"❌ Неправильно! Правильный ответ: {correct_answer}")
+                
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ Время вышло!")
+
+    @commands.command(name="кто")
+    async def who_is(self, ctx, *, question: str):
+        members = [member for member in ctx.guild.members if not member.bot]
+        
+        if not members:
+            await ctx.send("❌ На сервере нет участников!")
+            return
+        
+        chosen = random.choice(members)
+        
+        embed = discord.Embed(
+            title="🎭 Случайный выбор",
+            color=chosen.color
+        )
+        embed.add_field(name="❓ Вопрос", value=question, inline=False)
+        embed.add_field(name="👤 Выбран", value=chosen.mention, inline=False)
+        embed.set_thumbnail(url=chosen.avatar.url if chosen.avatar else chosen.default_avatar.url)
+        
+        await ctx.send(embed=embed)
 
 # ==================== МОДЕРАЦИЯ ====================
 class Mod(commands.Cog):
@@ -971,7 +1136,6 @@ class Mod(commands.Cog):
         return any(role.name.lower() in [r.lower() for r in ADMIN_ROLES] for role in member.roles)
 
     async def create_mute_role(self, guild):
-        """Создает роль для мьюта если её нет"""
         mute_role = discord.utils.get(guild.roles, name=MUTE_ROLE_NAME)
         if not mute_role:
             mute_role = await guild.create_role(
@@ -979,22 +1143,17 @@ class Mod(commands.Cog):
                 reason="Создание роли для мьюта"
             )
             
-            # Настраиваем права для роли во всех каналах
             for channel in guild.channels:
                 try:
                     if isinstance(channel, discord.TextChannel):
                         await channel.set_permissions(mute_role, 
                             send_messages=False,
-                            add_reactions=False,
-                            create_public_threads=False,
-                            create_private_threads=False,
-                            send_messages_in_threads=False
+                            add_reactions=False
                         )
                     elif isinstance(channel, discord.VoiceChannel):
                         await channel.set_permissions(mute_role,
                             speak=False,
-                            connect=False,
-                            stream=False
+                            connect=False
                         )
                 except discord.Forbidden:
                     continue
@@ -1015,13 +1174,9 @@ class Mod(commands.Cog):
             await ctx.send("❌ Нельзя замутить администратора!")
             return
         
-        # Создаем/получаем роль мута
         mute_role = await self.create_mute_role(ctx.guild)
-        
-        # Мьютим пользователя
         await member.add_roles(mute_role, reason=f"Мут от {ctx.author.name}: {reason}")
         
-        # Создаем embed для красоты
         embed = discord.Embed(
             title="🔇 Пользователь замьючен",
             color=0xff0000,
@@ -1034,7 +1189,6 @@ class Mod(commands.Cog):
         
         await ctx.send(embed=embed)
         
-        # Авто-размут через указанное время
         if time > 0:
             await asyncio.sleep(time * 60)
             try:
@@ -1076,8 +1230,7 @@ class Mod(commands.Cog):
             await ctx.send("❌ Нельзя удалить больше 100 сообщений за раз!")
             return
         
-        # Удаляем сообщения
-        deleted = await ctx.channel.purge(limit=amount + 1)  # +1 для команды
+        deleted = await ctx.channel.purge(limit=amount + 1)
         
         embed = discord.Embed(
             title="🧹 Очистка сообщений",
@@ -1085,7 +1238,6 @@ class Mod(commands.Cog):
             color=0xffff00
         )
         embed.add_field(name="🛡 Модератор", value=ctx.author.mention, inline=True)
-        embed.add_field(name="📊 Сообщений", value=str(len(deleted) - 1), inline=True)
         
         message = await ctx.send(embed=embed)
         await asyncio.sleep(5)
@@ -1151,211 +1303,6 @@ class Mod(commands.Cog):
         except discord.Forbidden:
             await ctx.send("❌ У бота нет прав для бана!")
 
-# ==================== РАЗВЛЕЧЕНИЯ ====================
-class Fun(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    @commands.command(name="рандом")
-    async def random_num(self, ctx, min_num: int = 1, max_num: int = 100):
-        """Генерирует случайное число"""
-        if min_num > max_num:
-            min_num, max_num = max_num, min_num
-        
-        result = random.randint(min_num, max_num)
-        await ctx.send(f"🎲 {ctx.author.mention}, случайное число: **{result}** (от {min_num} до {max_num})")
-
-    @commands.command(name="орёл")
-    async def coin_flip(self, ctx):
-        """Подбрасывает монетку"""
-        result = random.choice(["Орёл 🦅", "Решка 🪙"])
-        await ctx.send(f"🎯 {ctx.author.mention}, результат: **{result}**!")
-
-    @commands.command(name="выбор")
-    async def choose(self, ctx, *, options: str):
-        """Выбирает случайный вариант из списка"""
-        options_list = [opt.strip() for opt in options.split(",") if opt.strip()]
-        
-        if len(options_list) < 2:
-            await ctx.send("❌ Укажите хотя бы 2 варианта через запятую!")
-            return
-        
-        chosen = random.choice(options_list)
-        await ctx.send(f"🤔 {ctx.author.mention}, я выбираю: **{chosen}**!")
-
-    @commands.command(name="шар")
-    async def magic_ball(self, ctx, *, question: str):
-        """Магический шар отвечает на вопросы"""
-        answers = [
-            "Бесспорно! ✅", "Предрешено! ✅", "Никаких сомнений! ✅", "Определённо да! ✅",
-            "Можешь быть уверен в этом! ✅", "Мне кажется — «да»! 🤔", "Вероятнее всего! 👍",
-            "Хорошие перспективы! 👍", "Знаки говорят — «да»! 🔮", "Да! ✅",
-            "Пока не ясно, попробуй снова! 🔄", "Спроси позже! ⏰", "Лучше не рассказывать! 🤫",
-            "Сейчас нельзя предсказать! 🔮", "Сконцентрируйся и спроси опять! 🧘",
-            "Даже не думай! ❌", "Мой ответ — «нет»! ❌", "По моим данным — «нет»! ❌",
-            "Перспективы не очень хорошие! 👎", "Весьма сомнительно! 🤨"
-        ]
-        
-        answer = random.choice(answers)
-        embed = discord.Embed(
-            title="🎱 Магический шар",
-            color=0x7289da
-        )
-        embed.add_field(name="❓ Вопрос", value=question, inline=False)
-        embed.add_field(name="📜 Ответ", value=answer, inline=False)
-        embed.set_footer(text=f"Запросил: {ctx.author.display_name}")
-        
-        await ctx.send(embed=embed)
-
-    @commands.command(name="слоты")
-    @commands.cooldown(1, 10, commands.BucketType.user)
-    async def slots(self, ctx, bet: int = 10):
-        """Игра в слоты"""
-        if bet <= 0:
-            await ctx.send("❌ Ставка должна быть положительной!")
-            return
-
-        balance = await get_balance(ctx.author.id)
-        if balance < bet:
-            await ctx.send("❌ Недостаточно кредитов!")
-            return
-
-        # Символы для слотов
-        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
-        
-        # Генерируем результат
-        result = [random.choice(symbols) for _ in range(3)]
-        
-        # Определяем выигрыш
-        if result[0] == result[1] == result[2]:
-            if result[0] == "💎":
-                multiplier = 10  # Джекпот
-            elif result[0] == "7️⃣":
-                multiplier = 5
-            else:
-                multiplier = 3
-        elif result[0] == result[1] or result[1] == result[2]:
-            multiplier = 1.5
-        else:
-            multiplier = 0
-        
-        win_amount = int(bet * multiplier)
-        
-        # Обновляем баланс
-        if win_amount > 0:
-            await update_balance(ctx.author.id, win_amount)
-        else:
-            await update_balance(ctx.author.id, -bet)
-        
-        # Создаем красивый embed
-        embed = discord.Embed(
-            title="🎰 Игровые автоматы",
-            color=0xffd700 if win_amount > 0 else 0xff0000
-        )
-        
-        embed.add_field(
-            name="Результат",
-            value=f"**| {result[0]} | {result[1]} | {result[2]} |**",
-            inline=False
-        )
-        
-        if win_amount > 0:
-            if multiplier == 10:
-                embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
-            else:
-                embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
-        else:
-            embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
-        
-        embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
-        embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
-        
-        await ctx.send(embed=embed)
-
-    @commands.command(name="викторина")
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def quiz(self, ctx):
-        """Случайная викторина"""
-        questions = [
-            {
-                "question": "Сколько планет в Солнечной системе?",
-                "options": ["8", "9", "10", "7"],
-                "answer": 0
-            },
-            {
-                "question": "Какая самая длинная река в мире?",
-                "options": ["Амазонка", "Нил", "Янцзы", "Миссисипи"],
-                "answer": 0
-            },
-            {
-                "question": "В каком году началась Вторая мировая война?",
-                "options": ["1939", "1941", "1937", "1945"],
-                "answer": 0
-            },
-            {
-                "question": "Столица Австралии?",
-                "options": ["Канберра", "Сидней", "Мельбурн", "Перт"],
-                "answer": 0
-            }
-        ]
-        
-        q = random.choice(questions)
-        
-        embed = discord.Embed(
-            title="📚 Викторина",
-            description=q["question"],
-            color=0x0099ff
-        )
-        
-        options_text = ""
-        for i, option in enumerate(q["options"]):
-            options_text += f"{i+1}. {option}\n"
-        
-        embed.add_field(name="Варианты:", value=options_text, inline=False)
-        embed.set_footer(text="У вас 15 секунд чтобы ответить цифрой!")
-        
-        message = await ctx.send(embed=embed)
-        
-        def check(m):
-            return m.author == ctx.author and m.channel == ctx.channel and m.content.isdigit()
-        
-        try:
-            response = await self.bot.wait_for('message', timeout=15.0, check=check)
-            user_answer = int(response.content) - 1
-            
-            if user_answer == q["answer"]:
-                reward = random.randint(50, 150)
-                await update_balance(ctx.author.id, reward)
-                await ctx.send(f"✅ Правильно! {ctx.author.mention} получает {reward} кредитов!")
-            else:
-                correct_answer = q["options"][q["answer"]]
-                await ctx.send(f"❌ Неправильно! Правильный ответ: {correct_answer}")
-                
-        except asyncio.TimeoutError:
-            await ctx.send("⏰ Время вышло!")
-
-    @commands.command(name="кто")
-    async def who_is(self, ctx, *, question: str):
-        """Случайно выбирает участника сервера"""
-        members = [member for member in ctx.guild.members if not member.bot]
-        
-        if not members:
-            await ctx.send("❌ На сервере нет участников!")
-            return
-        
-        chosen = random.choice(members)
-        
-        embed = discord.Embed(
-            title="🎭 Случайный выбор",
-            color=chosen.color
-        )
-        embed.add_field(name="❓ Вопрос", value=question, inline=False)
-        embed.add_field(name="👤 Выбран", value=chosen.mention, inline=False)
-        embed.set_thumbnail(url=chosen.avatar.url if chosen.avatar else chosen.default_avatar.url)
-        
-        await ctx.send(embed=embed)
-
-
 # ==================== СОБЫТИЯ ====================
 class Events(commands.Cog):
     def __init__(self, bot):
@@ -1363,209 +1310,54 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("✅ Таблицы в БД готовы!")
+        print("✅ Бот готов к работе!")
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
             seconds = int(error.retry_after)
-            minutes = seconds // 60
-            seconds = seconds % 60
-            await ctx.send(f"⏳ Подождите {minutes}м {seconds}с, прежде чем использовать эту команду снова.")
+            if seconds > 3600:
+                time_str = f"{seconds // 3600}ч {(seconds % 3600) // 60}м"
+            elif seconds > 60:
+                time_str = f"{seconds // 60}м {seconds % 60}с"
+            else:
+                time_str = f"{seconds}с"
+            
+            await ctx.send(f"⏳ Подождите {time_str} перед использованием команды.")
+        elif isinstance(error, commands.CommandNotFound):
+            pass
         else:
-            print(f"⚠ Ошибка команды: {error}")
-            await ctx.send("❌ Произошла ошибка при выполнении команды")
+            print(f"⚠ Ошибка: {error}")
 
-from flask import Flask
-from threading import Thread
-from datetime import datetime
-import requests
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>🤖 Discord Bot</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                min-height: 100vh;
-            }
-            .container {
-                background: rgba(255,255,255,0.1);
-                padding: 30px;
-                border-radius: 15px;
-                backdrop-filter: blur(10px);
-                border: 1px solid rgba(255,255,255,0.2);
-            }
-            .status {
-                padding: 15px;
-                border-radius: 8px;
-                margin: 20px 0;
-                text-align: center;
-                font-weight: bold;
-            }
-            .online { 
-                background: rgba(76, 175, 80, 0.3); 
-                border: 2px solid #4CAF50;
-            }
-            .features { 
-                display: grid; 
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-                gap: 20px; 
-                margin: 30px 0; 
-            }
-            .feature { 
-                background: rgba(255,255,255,0.15); 
-                padding: 20px; 
-                border-radius: 10px;
-                text-align: center;
-                transition: transform 0.3s ease;
-            }
-            .feature:hover {
-                transform: translateY(-5px);
-                background: rgba(255,255,255,0.2);
-            }
-            h1 {
-                text-align: center;
-                margin-bottom: 30px;
-                font-size: 2.5em;
-            }
-            .footer {
-                text-align: center;
-                margin-top: 30px;
-                opacity: 0.8;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🎮 Discord Бот Активен</h1>
-            <div class="status online">✅ Бот работает в нормальном режиме</div>
-            
-            <div class="features">
-                <div class="feature">
-                    <h3>💰 Экономика</h3>
-                    <p>Система кредитов, магазин, бизнес, рулетка</p>
-                </div>
-                <div class="feature">
-                    <h3>👥 Кланы</h3>
-                    <p>Создание кланов, общая казна, улучшения</p>
-                </div>
-                <div class="feature">
-                    <h3>🎯 Развлечения</h3>
-                    <p>Игры, викторины, слоты, магический шар</p>
-                </div>
-                <div class="feature">
-                    <h3>🛡 Модерация</h3>
-                    <p>Мут, бан, очистка чата, варны</p>
-                </div>
-            </div>
-            
-            <div style="text-align: center;">
-                <p><strong>📝 Команды:</strong> Используйте <code>!помощь</code> в Discord</p>
-                <p><strong>🟢 Статус:</strong> <span style="color: #4CAF50; font-weight: bold;">● Онлайн</span></p>
-                <p><strong>🕐 Время работы:</strong> <span id="uptime">Загрузка...</span></p>
-            </div>
-            
-            <div class="footer">
-                <p>🤖 Бот с системой социального кредита</p>
-            </div>
-        </div>
-
-        <script>
-            // Простой скрипт для отображения времени работы
-            function updateUptime() {
-                fetch('/health')
-                    .then(response => response.json())
-                    .then(data => {
-                        const timestamp = new Date(data.timestamp);
-                        const now = new Date();
-                        const diff = now - timestamp;
-                        
-                        const hours = Math.floor(diff / (1000 * 60 * 60));
-                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                        
-                        document.getElementById('uptime').textContent = 
-                            `${hours}ч ${minutes}м`;
-                    })
-                    .catch(() => {
-                        document.getElementById('uptime').textContent = 'Не доступно';
-                    });
-            }
-            
-            // Обновляем каждую минуту
-            updateUptime();
-            setInterval(updateUptime, 60000);
-        </script>
-    </body>
-    </html>
-    """
-
-@app.route('/health')
-def health():
-    """Эндпоинт для проверки здоровья бота"""
-    return {
-        "status": "healthy", 
-        "timestamp": datetime.now().isoformat(),
-        "service": "discord_bot",
-        "version": "1.0.0"
-    }
-
-@app.route('/status')
-def status():
-    """Расширенный статус"""
-    return {
-        "status": "online",
-        "timestamp": datetime.now().isoformat(),
-        "endpoints": {
-            "health": "/health",
-            "home": "/",
-            "status": "/status"
-        }
-    }
-
-def run_flask():
-    """Запуск Flask сервера"""
+# ==================== ЗАПУСК БОТА ====================
+async def setup_bot():
     try:
-        print("🌐 Запуск Flask сервера...")
-        app.run(host='0.0.0.0', port=8080, debug=False)
+        bot.db = await create_db_pool()
+        await bot.add_cog(Economy(bot))
+        await bot.add_cog(Clans(bot))
+        await bot.add_cog(Profile(bot))
+        await bot.add_cog(Fun(bot))
+        await bot.add_cog(Mod(bot))
+        await bot.add_cog(Events(bot))
+        print("✅ Все коги загружены")
     except Exception as e:
-        print(f"❌ Ошибка Flask: {e}")
+        print(f"❌ Ошибка при настройке бота: {e}")
+        await bot.close()
 
-def keep_alive():
-    """Запуск веб-сервера в отдельном потоке"""
-    try:
-        flask_thread = Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
-        print("✅ Веб-сервер запущен на порту 8080")
-        print("📊 Статус страница доступна по: http://localhost:8080")
-        print("🔧 Health check: http://localhost:8080/health")
-    except Exception as e:
-        print(f"❌ Ошибка при запуске веб-сервера: {e}")
+@bot.event
+async def on_ready():
+    print("=" * 50)
+    print(f"🤖 Бот: {bot.user.name}")
+    print(f"🆔 ID: {bot.user.id}")
+    print(f"📡 Серверов: {len(bot.guilds)}")
+    print("=" * 50)
 
-# Дополнительные функции для мониторинга
-def check_bot_status():
-    """Проверка статуса бота (может быть использована для мониторинга)"""
-    try:
-        response = requests.get('http://localhost:8080/health', timeout=5)
-        if response.status_code == 200:
-            return True
-        return False
-    except:
-        return False
+async def main():
+    keep_alive()
+    await asyncio.sleep(2)
+    await setup_bot()
+    print("🚀 Запускаем Discord бота...")
+    await bot.start(TOKEN)
 
 if __name__ == "__main__":
-    # Если файл запущен напрямую, запускаем Flask сервер
-    print("🚀 Запуск Flask сервера напрямую...")
-    keep_alive()
+    asyncio.run(main())
