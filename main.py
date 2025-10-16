@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord.ext.commands import CommandOnCooldown
 import random
+import sys
 import os
 import asyncpg
 import asyncio
@@ -51,7 +52,8 @@ def health():
 
 def run_flask():
     try:
-        app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=8080, debug=False, use_reloader=False)
     except Exception as e:
         print(f"❌ Ошибка Flask: {e}")
 
