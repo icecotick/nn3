@@ -996,14 +996,15 @@ class Fun(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="слоты")
-    @commands.cooldown(1, 10, commands.BucketType.user)
-    async def slots(self, ctx, bet: int = 10):
-        if bet <= 0:
-            await ctx.send("❌ Ставка должна быть положительной!")
-            return
+@commands.command(name="слоты")
+@commands.cooldown(1, 10, commands.BucketType.user)
+async def slots(self, ctx, bet: int = 10):
+    if bet <= 0:
+        await ctx.send("❌ Ставка должна быть положительной!")
+        return
 
-    balance = await get_balance(ctx.author.id)
+    # ИСПРАВЛЕННЫЕ СТРОКИ:
+    balance = await get_balance_from_db(ctx.author.id)
     if balance < bet:
         await ctx.send("❌ Недостаточно кредитов!")
         return
@@ -1026,9 +1027,11 @@ class Fun(commands.Cog):
     win_amount = int(bet * multiplier)
     
     if win_amount > 0:
-        await update_balance(ctx.author.id, win_amount)
+        # ИСПРАВЛЕННАЯ СТРОКА:
+        await update_balance_in_db(ctx.author.id, win_amount)
     else:
-        await update_balance(ctx.author.id, -bet)
+        # ИСПРАВЛЕННАЯ СТРОКА:
+        await update_balance_in_db(ctx.author.id, -bet)
     
     embed = discord.Embed(
         title="🎰 Игровые автоматы",
@@ -1049,11 +1052,12 @@ class Fun(commands.Cog):
     else:
         embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
     
-    embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
+    # ИСПРАВЛЕННАЯ СТРОКА:
+    embed.add_field(name="💰 Баланс", value=f"{await get_balance_from_db(ctx.author.id)} кредитов", inline=True)
     embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
     
     await ctx.send(embed=embed)
-
+    
     @commands.command(name="викторина")
     @commands.cooldown(1, 30, commands.BucketType.user)
     async def quiz(self, ctx):
