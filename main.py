@@ -41,7 +41,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==================== FLASK СЕРВЕР ====================
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
