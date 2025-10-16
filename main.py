@@ -996,7 +996,7 @@ class Fun(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="слоты")
+@commands.command(name="слоты")
 @commands.cooldown(1, 10, commands.BucketType.user)
 async def slots(self, ctx, bet: int = 10):
     if bet <= 0:
