@@ -1163,7 +1163,7 @@ class Fun(commands.Cog):
             min_num, max_num = max_num, min_num
         
         result = random.randint(min_num, max_num)
-        await ctx.send(f🎲 {ctx.author.mention}, случайное число: **{result}** (от {min_num} до {max_num})")
+        await ctx.send(f"🎲 {ctx.author.mention}, случайное число: **{result}** (от {min_num} до {max_num})")
 
     @commands.command(name="орёл")
     async def coin_flip(self, ctx):
