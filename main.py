@@ -206,7 +206,7 @@ class Economy(commands.Cog):
             await ctx.send(f'🕊 {user.mention}, -{penalty} рейтинга. Попробуй ещё! (Баланс: {await get_balance(user.id)})')
 
     @commands.command(name="фарм")
-    @commands.cooldown(1, 1200, commands.BucketType.user)
+    @commands.cooldown(1        , 1200, commands.BucketType.user)
     async def farm(self, ctx):
         user = ctx.author
         role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
