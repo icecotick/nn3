@@ -1203,7 +1203,7 @@ class Fun(commands.Cog):
         )
         embed.add_field(name="❓ Вопрос", value=question, inline=False)
         embed.add_field(name="📜 Ответ", value=answer, inline=False)
-        embed.set_footer(text=fЗапросил: {ctx.author.display_name}")
+        embed.set_footer(text=f"Запросил: {ctx.author.display_name}")
         
         await ctx.send(embed=embed)
 
