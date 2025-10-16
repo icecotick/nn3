@@ -167,7 +167,7 @@ async def update_profile_description(user_id: int, description: str):
 
 # ==================== ЭКОНОМИКА ====================
 class Economy(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     def is_admin(self, member):
@@ -655,7 +655,7 @@ class Economy(commands.Cog):
 
 # ==================== КЛАНЫ ====================
 class Clans(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     async def get_clan_members(self, clan_name: str):
@@ -946,7 +946,7 @@ class Profile(commands.Cog):
 
 # ==================== РАЗВЛЕЧЕНИЯ ====================
 class Fun(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="рандом")
@@ -1136,7 +1136,7 @@ async def slots(self, ctx, bet: int = 10):
 
 # ==================== МОДЕРАЦИЯ ====================
 class Mod(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     def is_admin(self, member):
@@ -1312,7 +1312,7 @@ class Mod(commands.Cog):
 
 # ==================== СОБЫТИЯ ====================
 class Events(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
