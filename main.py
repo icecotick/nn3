@@ -586,7 +586,7 @@ class Economy(commands.Cog):
         else:
             await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
         
-        @commands.command(name="помощь")
+    @commands.command(name="помощь")
     async def help_command(self, ctx):
         try:
             help_text = """
