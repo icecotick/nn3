@@ -878,7 +878,7 @@ class Clans(commands.Cog):
 
 # ==================== ПРОФИЛЬ ====================
 class Profile(commands.Cog):
-    def init(self, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="профиль")
@@ -1003,8 +1003,7 @@ async def slots(self, ctx, bet: int = 10):
         await ctx.send("❌ Ставка должна быть положительной!")
         return
 
-    # ИСПРАВЛЕННЫЕ СТРОКИ:
-    balance = await get_balance_from_db(ctx.author.id)
+    balance = await get_balance(ctx.author.id)
     if balance < bet:
         await ctx.send("❌ Недостаточно кредитов!")
         return
@@ -1027,11 +1026,9 @@ async def slots(self, ctx, bet: int = 10):
     win_amount = int(bet * multiplier)
     
     if win_amount > 0:
-        # ИСПРАВЛЕННАЯ СТРОКА:
-        await update_balance_in_db(ctx.author.id, win_amount)
+        await update_balance(ctx.author.id, win_amount)
     else:
-        # ИСПРАВЛЕННАЯ СТРОКА:
-        await update_balance_in_db(ctx.author.id, -bet)
+        await update_balance(ctx.author.id, -bet)
     
     embed = discord.Embed(
         title="🎰 Игровые автоматы",
@@ -1052,8 +1049,7 @@ async def slots(self, ctx, bet: int = 10):
     else:
         embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
     
-    # ИСПРАВЛЕННАЯ СТРОКА:
-    embed.add_field(name="💰 Баланс", value=f"{await get_balance_from_db(ctx.author.id)} кредитов", inline=True)
+    embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
     embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
     
     await ctx.send(embed=embed)
@@ -1378,39 +1374,35 @@ async def close_bot():
     except Exception as e:
         print(f"⚠️ Ошибка при закрытии: {e}")
 
-def run_discord_bot():
-    """Запуск Discord бота в отдельном потоке"""
-    async def start_bot():
-        try:
-            setup_ok = await setup_bot()
-            if not setup_ok:
-                print("❌ Не удалось настроить бота")
-                return
-            
-            print("🚀 Запускаем Discord бота...")
-            await bot.start(TOKEN)
-        except KeyboardInterrupt:
-            print("⏹ Остановка по запросу пользователя...")
-        except Exception as e:
-            print(f"❌ Ошибка при запуске бота: {e}")
-        finally:
-            await close_bot()
-    
-    # Запускаем асинхронную функцию в отдельном потоке
-    asyncio.run(start_bot())
+async def main():
+    """Основная асинхронная функция для запуска бота"""
+    try:
+        setup_ok = await setup_bot()
+        if not setup_ok:
+            print("❌ Не удалось настроить бота")
+            return
+        
+        print("🚀 Запускаем Discord бота...")
+        await bot.start(TOKEN)
+    except KeyboardInterrupt:
+        print("⏹ Остановка по запросу пользователя...")
+    except Exception as e:
+        print(f"❌ Ошибка при запуске бота: {e}")
+    finally:
+        await close_bot()
 
 if __name__ == '__main__':
     print("🔧 Инициализация приложения...")
     
-    # Запускаем Flask в главном потоке
+    # Запускаем Flask в отдельном потоке
     keep_alive()
     
     # Даем Flask время запуститься
     import time
     time.sleep(2)
     
-    # Запускаем Discord бота
+    # Запускаем Discord бота в основном потоке
     try:
-        run_discord_bot()
+        asyncio.run(main())
     except Exception as e:
         print(f"❌ Фатальная ошибка: {e}")
