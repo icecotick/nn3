@@ -421,7 +421,7 @@ class Economy(commands.Cog):
         await ctx.send(f"✅ {user.mention}, вы купили премиум-роль {existing_role.mention}!")
 
     @commands.command(name="бустер")
-    async def buy_booster(self, ctx, booster_type: str):
+    async def buy_booster(self, ctx, boooster_type: str):
         user = ctx.author
         balance = await get_balance(user.id)
         
@@ -459,7 +459,7 @@ class Economy(commands.Cog):
         await ctx.send(f"🚀 {user.mention}, вы активировали бустер {booster_type} на {hours} часов!")
 
     @commands.command(name="купитьлицензию")
-    async def buy_license(self, ctx, license_type: str):
+    async def buy_booster(self, ctx, license_type: str):
         user = ctx.author
         balance = await get_balance(user.id)
         
@@ -547,45 +547,7 @@ class Economy(commands.Cog):
             """, ctx.author.id, datetime.now())
         
         await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов!")
-
-    @commands.command(name="рулетка")
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def roulette(self, ctx, bet: int):
-        if bet <= 0:
-            await ctx.send("❌ Ставка должна быть положительной!")
-            return
-
-        balance = await get_balance(ctx.author.id)
-        if balance < bet:
-            await ctx.send("❌ Недостаточно кредитов!")
-            return
-
-        user_data = await get_user_data(ctx.author.id)
-        has_roulette_booster = user_data and user_data['roulette_booster_until'] and user_data['roulette_booster_until'] > datetime.now()
-        
-        if has_roulette_booster:
-            outcomes = ["win", "win", "lose", "jackpot", "refund"]
-            weights = [30, 25, 20, 5, 20]
-        else:
-            outcomes = ["win", "lose", "refund"]
-            weights = [40, 40, 20]
-
-        outcome = random.choices(outcomes, weights=weights)[0]
-
-        if outcome == "win":
-            win_amount = bet * 2
-            await update_balance(ctx.author.id, win_amount)
-            await ctx.send(f"🎉 {ctx.author.mention} выиграл {win_amount} кредитов!{' 🚀' if has_roulette_booster else ''}")
-        elif outcome == "jackpot":
-            win_amount = bet * 5
-            await update_balance(ctx.author.id, win_amount)
-            await ctx.send(f"💰 ДЖЕКПОТ! {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
-        elif outcome == "lose":
-            await update_balance(ctx.author.id, -bet)
-            await ctx.send(f"💀 {ctx.author.mention} проиграл {bet} кредитов...{' 🚀' if has_roulette_booster else ''}")
-        else:
-            await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
-        
+    
     @commands.command(name="помощь")
     async def help_command(self, ctx):
         try:
