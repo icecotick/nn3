@@ -996,67 +996,37 @@ class Fun(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="слоты")
-    @commands.cooldown(1, 10, commands.BucketType.user)
-    async def slots(self, ctx, bet: int = 10):
-        if bet <= 0:
-            await ctx.send("❌ Ставка должна быть положительной!")
-            return
+@commands.command(name="слоты")
+@commands.cooldown(1, 10, commands.BucketType.user)
+async def slots(self, ctx, bet: int = 10):  # ДОБАВИТЬ self
+    if bet <= 0:
+        await ctx.send("❌ Ставка должна быть положительной!")
+        return
 
-        # ИСПРАВЛЕННЫЕ СТРОКИ:
-        balance = await get_balance(ctx.author.id)
-        if balance < bet:
-            await ctx.send("❌ Недостаточно кредитов!")
-            return
+    balance = await get_balance(ctx.author.id)
+    if balance < bet:
+        await ctx.send("❌ Недостаточно кредитов!")
+        return
 
-        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
-        result = [random.choice(symbols) for _ in range(3)]
-        
-        if result[0] == result[1] == result[2]:
-            if result[0] == "💎":
-                multiplier = 10
-            elif result[0] == "7️⃣":
-                multiplier = 5
-            else:
-                multiplier = 3
-        elif result[0] == result[1] or result[1] == result[2]:
-            multiplier = 1.5
+    symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
+    result = [random.choice(symbols) for _ in range(3)]
+    
+    if result[0] == result[1] == result[2]:
+        if result[0] == "💎":
+            multiplier = 10
+        elif result[0] == "7️⃣":
+            multiplier = 5
         else:
-            multiplier = 0
-        
-        win_amount = int(bet * multiplier)
-        
-        if win_amount > 0:
-            # ИСПРАВЛЕННАЯ СТРОКА:
-            await update_balance(ctx.author.id, win_amount)
-        else:
-            # ИСПРАВЛЕННАЯ СТРОКА:
-            await update_balance(ctx.author.id, -bet)
-        
-        embed = discord.Embed(
-            title="🎰 Игровые автоматы",
-            color=0xffd700 if win_amount > 0 else 0xff0000
-        )
-        
-        embed.add_field(
-            name="Результат",
-            value=f"| {result[0]} | {result[1]} | {result[2]} |",
-            inline=False
-        )
-        
-        if win_amount > 0:
-            if multiplier == 10:
-                embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
-            else:
-                embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
-        else:
-            embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
-        
-        # ИСПРАВЛЕННАЯ СТРОКА:
-        embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
-        embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
-        
-        await ctx.send(embed=embed)
+            multiplier = 3
+        net_win = int(bet * multiplier) - bet
+        await update_balance(ctx.author.id, net_win)
+    elif result[0] == result[1] or result[1] == result[2]:
+        multiplier = 1.5
+        net_win = int(bet * multiplier) - bet
+        await update_balance(ctx.author.id, net_win)
+    else:
+        await update_balance(ctx.author.id, -bet)
+        net_win = -bet
     
     @commands.command(name="викторина")
     @commands.cooldown(1, 30, commands.BucketType.user)
