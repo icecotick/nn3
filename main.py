@@ -227,6 +227,41 @@ class Economy(commands.Cog):
 
         await update_balance(user.id, reward)
         await ctx.send(f"🌾 {user.mention}, вы заработали {reward} соц. кредитов{booster_text}! (Баланс: {await get_balance(user.id)})")
+        
+@bot.command(name="диагностика")
+async def diagnostics(ctx):
+    try:
+        # Проверяем основные компоненты
+        problems = []
+        
+        # 1. Проверяем роль Патриот
+        role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
+        if not role:
+            problems.append("❌ Роль 'Патриот' не найдена на сервере")
+        
+        # 2. Проверяем базу данных
+        try:
+            balance = await get_balance(ctx.author.id)
+            problems.append(f"✅ База данных работает (баланс: {balance})")
+        except Exception as e:
+            problems.append(f"❌ Ошибка БД: {e}")
+        
+        # 3. Проверяем коги
+        cog_status = []
+        for cog_name in ['Economy', 'Clans', 'Profile', 'Fun', 'Mod', 'Events']:
+            cog = bot.get_cog(cog_name)
+            if cog:
+                cog_status.append(f"✅ {cog_name}")
+            else:
+                cog_status.append(f"❌ {cog_name}")
+        
+        problems.append("**Коги:** " + ", ".join(cog_status))
+        
+        # Отправляем результат
+        await ctx.send("\n".join(problems))
+        
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка диагностики: {e}")
 
     @commands.command(name="баланс")
     @commands.cooldown(1, 5, commands.BucketType.user)
