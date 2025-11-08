@@ -6,18 +6,11 @@ import os
 import asyncpg
 import asyncio
 from datetime import datetime, timedelta
-from flask import Flask
-from threading import Thread
-import signal
-import sys
-import logging
-logging.basicConfig(level=logging.DEBUG)
 
-# ==================== КОНФИГУРАЦИЯ ====================
+# ==================== КОНФИГ ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Настройки бота
 ROLE_NAME = "Патриот"
 ADMIN_ROLES = ["создатель", "главный модер"]
 CUSTOM_ROLE_PRICE = 2000
@@ -26,54 +19,27 @@ SUCCESS_CHANCE = 40
 CLAN_CREATION_PRICE = 5000
 MUTE_ROLE_NAME = "Muted"
 
-# Проверка переменных окружения
+# Проверка переменных
 if not TOKEN:
     print("❌ Ошибка: Не установлен DISCORD_TOKEN")
-    sys.exit(1)
+    exit(1)
 
 if not DATABASE_URL:
     print("❌ Ошибка: Не установлен DATABASE_URL")
-    sys.exit(1)
+    exit(1)
 
-# Настройки Discord
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ==================== FLASK СЕРВЕР ====================
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Бот активен! 🤖"
-
-@app.route('/health')
-def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
-
-def run_flask():
-    try:
-        port = int(os.environ.get('PORT', 8080))
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    except Exception as e:
-        print(f"❌ Ошибка Flask: {e}")
-
-def keep_alive():
-    try:
-        flask_thread = Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
-        print("✅ Веб-сервер запущен")
-    except Exception as e:
-        print(f"❌ Ошибка при запуске веб-сервера: {e}")
-
 # ==================== БАЗА ДАННЫХ ====================
 async def create_db_pool():
     try:
         pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
         async with pool.acquire() as conn:
+            # Таблица пользователей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -87,6 +53,7 @@ async def create_db_pool():
                     last_business_claim TIMESTAMP
                 )
             """)
+            # Таблица кастомных ролей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS custom_roles (
                     user_id BIGINT PRIMARY KEY,
@@ -95,21 +62,23 @@ async def create_db_pool():
                     role_color TEXT
                 )
             """)
+            # Таблица кланов
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS clans (
                     name TEXT PRIMARY KEY,
                     owner_id BIGINT,
                     balance INTEGER DEFAULT 0,
-                    member_slots INTEGER DEFAULT 10,
-                    income_multiplier DECIMAL DEFAULT 1.0
+                    member_slots INTEGER DEFAULT 10
                 )
             """)
+            # Таблица связи пользователей и кланов
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS user_clans (
                     user_id BIGINT PRIMARY KEY,
                     clan_name TEXT
                 )
             """)
+            # Таблица премиум ролей
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS premium_roles (
                     user_id BIGINT PRIMARY KEY,
@@ -120,7 +89,7 @@ async def create_db_pool():
         return pool
     except Exception as e:
         print(f"❌ Ошибка базы данных: {e}")
-        sys.exit(1)
+        exit(1)
 
 async def get_balance(user_id: int):
     async with bot.db.acquire() as conn:
@@ -133,14 +102,6 @@ async def update_balance(user_id: int, amount: int):
             INSERT INTO users (user_id, balance) VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE SET balance = users.balance + $2
         """, user_id, amount)
-
-async def get_user_data(user_id: int):
-    async with bot.db.acquire() as conn:
-        return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-
-async def get_user_clan(user_id: int):
-    async with bot.db.acquire() as conn:
-        return await conn.fetchval("SELECT clan_name FROM user_clans WHERE user_id = $1", user_id)
 
 async def get_custom_role(user_id: int):
     async with bot.db.acquire() as conn:
@@ -155,6 +116,21 @@ async def create_custom_role(user_id: int, role_id: int, role_name: str, role_co
             role_id = $2, role_name = $3, role_color = $4
         """, user_id, role_id, role_name, role_color)
 
+async def get_user_clan(user_id: int):
+    async with bot.db.acquire() as conn:
+        return await conn.fetchval("SELECT clan_name FROM user_clans WHERE user_id = $1", user_id)
+
+async def add_user_to_clan(user_id: int, clan_name: str):
+    async with bot.db.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO user_clans (user_id, clan_name) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET clan_name = $2
+        """, user_id, clan_name)
+
+async def remove_user_from_clan(user_id: int):
+    async with bot.db.acquire() as conn:
+        await conn.execute("DELETE FROM user_clans WHERE user_id = $1", user_id)
+
 async def get_profile_description(user_id: int):
     async with bot.db.acquire() as conn:
         result = await conn.fetchrow("SELECT profile_description FROM users WHERE user_id = $1", user_id)
@@ -166,6 +142,10 @@ async def update_profile_description(user_id: int, description: str):
             INSERT INTO users (user_id, profile_description) VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE SET profile_description = $2
         """, user_id, description)
+
+async def get_user_data(user_id: int):
+    async with bot.db.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
 
 # ==================== ЭКОНОМИКА ====================
 class Economy(commands.Cog):
@@ -195,7 +175,7 @@ class Economy(commands.Cog):
         if roll <= CRIT_CHANCE:
             await user.add_roles(role)
             await update_balance(user.id, 1000)
-            await ctx.send(f'💥 КРИТ! {user.mention}, ты получил роль + 1000 социального рейтинга! (Баланс: {await get_balance(user.id)})')
+            await ctx.send(f'💥 **КРИТ!** {user.mention}, ты получил роль + 1000 социального рейтинга! (Баланс: {await get_balance(user.id)})')
 
         elif roll <= SUCCESS_CHANCE:
             await user.add_roles(role)
@@ -207,23 +187,15 @@ class Economy(commands.Cog):
             await update_balance(user.id, -penalty)
             await ctx.send(f'🕊 {user.mention}, -{penalty} рейтинга. Попробуй ещё! (Баланс: {await get_balance(user.id)})')
 
-@commands.command(name="фарм")
-@commands.cooldown(1, 1200, commands.BucketType.user)
-async def farm(self, ctx):
-    try:
+    @commands.command(name="фарм")
+    @commands.cooldown(1, 1200, commands.BucketType.user)
+    async def farm(self, ctx):
         user = ctx.author
         role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
-        
-        print(f"DEBUG: Проверка роли для {user.name}")  # Добавь эту строку
-        
-        if not role:
-            await ctx.send("❌ Роль 'Патриот' не найдена на сервере!")
+
+        if not role or role not in user.roles:
+            await ctx.send("⛔ Эта команда доступна только для Патриотов.")
             return
-            
-        if role not in user.roles:
-            await ctx.send("⛔️ У вас нет роли Патриот!")
-            return
-            
 
         user_data = await get_user_data(user.id)
         base_reward = random.randint(30, 70)
@@ -238,11 +210,11 @@ async def farm(self, ctx):
         await update_balance(user.id, reward)
         await ctx.send(f"🌾 {user.mention}, вы заработали {reward} соц. кредитов{booster_text}! (Баланс: {await get_balance(user.id)})")
 
-@commands.command(name="баланс")
-@commands.cooldown(1, 5, commands.BucketType.user)
-async def balance(self, ctx):
-    bal = await get_balance(ctx.author.id)
-    await ctx.send(f'💰 {ctx.author.mention}, ваш баланс: {bal} кредитов')
+    @commands.command(name="баланс")
+    @commands.cooldown(1, 5, commands.BucketType.user)
+    async def balance(self, ctx):
+        bal = await get_balance(ctx.author.id)
+        await ctx.send(f'💰 {ctx.author.mention}, ваш баланс: {bal}')
 
     @commands.command(name="перевести")
     async def transfer(self, ctx, member: discord.Member, amount: int):
@@ -260,7 +232,7 @@ async def balance(self, ctx):
 
         await update_balance(ctx.author.id, -amount)
         await update_balance(member.id, amount)
-        await ctx.send(f'✅ {ctx.author.mention} перевел {amount} кредитов {member.mention}!')
+        await ctx.send(f'✅ {ctx.author.mention} перевел {amount} рейтинга {member.mention}!')
 
     @commands.command(name="топ")
     @commands.cooldown(1, 5, commands.BucketType.user)
@@ -280,7 +252,7 @@ async def balance(self, ctx):
             except:
                 leaderboard.append(f"{i}. [Неизвестный пользователь] — {record['balance']} кредитов")
 
-        await ctx.send("🏆 Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
+        await ctx.send("🏆 **Топ 10 Патриотов:**\n" + "\n".join(leaderboard))
 
     @commands.command(name="допкредит")
     async def add_credits(self, ctx, member: discord.Member, amount: int):
@@ -314,40 +286,40 @@ async def balance(self, ctx):
         await update_balance(member.id, -amount)
         new_balance = await get_balance(member.id)
         await ctx.send(f"✅ Администратор {ctx.author.mention} снял {amount} кредитов у пользователя {member.mention}\n💰 Новый баланс: {new_balance} кредитов")
-        
+
     @commands.command(name="магазин")
     async def shop(self, ctx):
         balance = await get_balance(ctx.author.id)
         
         shop_text = f"""
-🛍 Магазин социального кредита:
+🛍 **Магазин социального кредита:**
 
 🎨 Кастомные роли
-!купитьроль "Название" #Цвет - Персональная роль ({CUSTOM_ROLE_PRICE} кредитов)
+`!купитьроль "Название" #Цвет` - Персональная роль ({CUSTOM_ROLE_PRICE} кредитов)
 
 🏷 Премиум-роли (появляются в топе участников)
-!купитьпремиум золотой - Золотая роль (5000 кредитов)
-!купитьпремиум платиновый - Платиновая роль (10000 кредитов)
+`!купитьпремиум золотой` - Золотая роль (5000 кредитов)
+`!купитьпремиум платиновый` - Платиновая роль (10000 кредитов)
 
 🎁 Бустеры доходов
-!бустер фарма - +50% к фарму на 24 часа (1500 кредитов)
-!бустер рулетки - +25% к шансу выигрыша на 12 часов (2000 кредитов)
+`!бустер фарма` - +50% к фарму на 24 часа (1500 кредитов)
+`!бустер рулетки` - +25% к шансу выигрыша на 12 часов (2000 кредитов)
 
 💼 Бизнес-лицензии (пассивный доход)
-!купитьлицензию малый - Малый бизнес (+100 кредитов/час, 8000 кредитов)
-!купитьлицензию средний - Средний бизнес (+250 кредитов/час, 15000 кредитов)
-!купитьлицензию крупный - Крупный бизнес (+500 кредитов/час, 30000 кредитов)
+`!купитьлицензию малый` - Малый бизнес (+100 кредитов/час, 8000 кредитов)
+`!купитьлицензию средний` - Средний бизнес (+250 кредитов/час, 15000 кредитов)
+`!купитьлицензию крупный` - Крупный бизнес (+500 кредитов/час, 30000 кредитов)
 
 🎯 Особые возможности
-!сменитьник "новый ник" - Смена ника на сервере (3000 кредитов)
-!анонс текст - Отправить объявление в спец. канал (5000 кредитов)
+`!сменитьник "новый ник"` - Смена ника на сервере (3000 кредитов)
+`!анонс текст` - Отправить объявление в спец. канал (5000 кредитов)
 
 💰 Ваш баланс: {balance} кредитов
 
 Примеры:
-!купитьроль "Богач" #ff0000
-!бустер фарма
-!купитьлицензию малый
+`!купитьроль "Богач" #ff0000`
+`!бустер фарма`
+`!купитьлицензию малый`
 """
         await ctx.send(shop_text)
 
@@ -383,7 +355,7 @@ async def balance(self, ctx):
             
             await ctx.send(f"✅ {user.mention}, вы успешно купили роль {new_role.mention} за {CUSTOM_ROLE_PRICE} кредитов!")
         except ValueError:
-            await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: #ff0000")
+            await ctx.send("❌ Неверный формат цвета! Используйте HEX формат, например: `#ff0000`")
         except Exception as e:
             print(f"Ошибка при создании роли: {e}")
             await ctx.send("❌ Произошла ошибка при создании роли. Попробуйте позже.")
@@ -431,7 +403,7 @@ async def balance(self, ctx):
         await ctx.send(f"✅ {user.mention}, вы купили премиум-роль {existing_role.mention}!")
 
     @commands.command(name="бустер")
-    async def buy_booster(self, ctx, boooster_type: str):
+    async def buy_booster(self, ctx, booster_type: str):
         user = ctx.author
         balance = await get_balance(user.id)
         
@@ -469,7 +441,7 @@ async def balance(self, ctx):
         await ctx.send(f"🚀 {user.mention}, вы активировали бустер {booster_type} на {hours} часов!")
 
     @commands.command(name="купитьлицензию")
-    async def buy_booster(self, ctx, license_type: str):
+    async def buy_license(self, ctx, license_type: str):
         user = ctx.author
         balance = await get_balance(user.id)
         
@@ -537,7 +509,7 @@ async def balance(self, ctx):
             color=0x00ff00,
             timestamp=datetime.now()
         )
-        embed.set_author(name=user.display_name, icon_url=user.avatar.url if user.avatar else user.default_avatar.url)
+        embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
         embed.set_footer(text="Купить размещение: !анонс текст")
         
         await ctx.send(embed=embed)
@@ -557,68 +529,107 @@ async def balance(self, ctx):
             """, ctx.author.id, datetime.now())
         
         await ctx.send(f"🎁 {ctx.author.mention}, вы получили {reward} кредитов!")
-    
+
+    @commands.command(name="рулетка")
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def roulette(self, ctx, bet: int):
+        if bet <= 0:
+            await ctx.send("❌ Ставка должна быть положительной!")
+            return
+
+        balance = await get_balance(ctx.author.id)
+        if balance < bet:
+            await ctx.send("❌ Недостаточно кредитов!")
+            return
+
+        user_data = await get_user_data(ctx.author.id)
+        has_roulette_booster = user_data and user_data['roulette_booster_until'] and user_data['roulette_booster_until'] > datetime.now()
+        
+        if has_roulette_booster:
+            outcomes = ["win", "win", "lose", "jackpot", "refund"]
+            weights = [30, 25, 20, 5, 20]
+        else:
+            outcomes = ["win", "lose", "refund"]
+            weights = [40, 40, 20]
+
+        outcome = random.choices(outcomes, weights=weights)[0]
+
+        if outcome == "win":
+            win_amount = bet * 2
+            await update_balance(ctx.author.id, win_amount)
+            await ctx.send(f"🎉 {ctx.author.mention} выиграл {win_amount} кредитов!{' 🚀' if has_roulette_booster else ''}")
+        elif outcome == "jackpot":
+            win_amount = bet * 5
+            await update_balance(ctx.author.id, win_amount)
+            await ctx.send(f"💰 ДЖЕКПОТ! {ctx.author.mention} выиграл {win_amount} кредитов! 🎰")
+        elif outcome == "lose":
+            await update_balance(ctx.author.id, -bet)
+            await ctx.send(f"💀 {ctx.author.mention} проиграл {bet} кредитов...{' 🚀' if has_roulette_booster else ''}")
+        else:
+            await ctx.send(f"🔄 {ctx.author.mention} вернул свои {bet} кредитов.{' 🚀' if has_roulette_booster else ''}")
+
+    # КОМАНДА ПОМОЩЬ - ИСПРАВЛЕННАЯ
     @commands.command(name="помощь")
     async def help_command(self, ctx):
         try:
             help_text = """
-📜 Команды бота:
+📜 **Команды бота:**
 
-🔰 Основные
-🔴 !славанн — попытка стать Патриотом (2ч кд)
-🌾 !фарм — заработать кредиты (20м кд, только для Патриотов)  
-💰 !баланс — показать баланс (5с кд)
-🎁 !ежедневный — ежедневная награда (24ч кд)
+🔰 **Основные**
+🔴 `!славанн` — попытка стать Патриотом (2ч кд)
+🌾 `!фарм` — заработать кредиты (20м кд, только для Патриотов)  
+💰 `!баланс` — показать баланс (5с кд)
+🎁 `!ежедневный` — ежедневная награда (24ч кд)
 
-💸 Экономика
-💸 !перевести @юзер сумма — перевод кредитов
-🎰 !рулетка ставка — игра в рулетку (30с кд)
-🏆 !топ — топ-10 по балансу (5с кд)
+💸 **Экономика**
+💸 `!перевести @юзер сумма` — перевод кредитов
+🎰 `!рулетка ставка` — игра в рулетку (30с кд)
+🏆 `!топ` — топ-10 по балансу (5с кд)
 
-🛍 Магазин 
-🛍 !магазин — просмотреть магазин
-🎨 !купитьроль "Название" #Цвет — кастомная роль (2000к)
-⭐️ !купитьпремиум тип — премиум-роль (5000-10000к)
-🚀 !бустер тип — бустеры доходов (1500-2000к)
-💼 !купитьлицензию тип — бизнес-лицензии (8000-30000к)
-📝 !сменитьник "ник" — сменить ник (3000к)
-📢 !анонс текст — отправить объявление (5000к)
+🛍 **Магазин** 
+🛍 `!магазин` — просмотреть магазин
+🎨 `!купитьроль "Название" #Цвет` — кастомная роль (2000к)
+⭐️ `!купитьпремиум тип` — премиум-роль (5000-10000к)
+🚀 `!бустер тип` — бустеры доходов (1500-2000к)
+💼 `!купитьлицензию тип` — бизнес-лицензии (8000-30000к)
+📝 `!сменитьник "ник"` — сменить ник (3000к)
+📢 `!анонс текст` — отправить объявление (5000к)
 
-👥 Кланы
-👥 !создатьклан название — создать клан (5000к)
-👥 !войтивклан название — вступить в клан
-👥 !покинутьклан — покинуть клан
-👥 !клан [название] — информация о клане
-🏆 !клантоп — топ кланов
-💵 !внести_клан сумма — внести в казну
-💸 !снять_клан сумма — снять из казны (владелец)
+👥 **Кланы**
+👥 `!создатьклан название` — создать клан (5000к)
+👥 `!войтивклан название` — вступить в клан
+👥 `!покинутьклан` — покинуть клан
+👥 `!клан [название]` — информация о клане
+🏆 `!клантоп` — топ кланов
+💵 `!внестиклан сумма` — внести в казну
+💸 `!снятьклан сумма` — снять из казны (владелец)
 
-👤 Профиль
-👤 !профиль [@юзер] — посмотреть профиль
-📝 !описание_профиль текст — изменить описание
-🔄 !сбросить_описание — сбросить описание
+👤 **Профиль**
+👤 `!профиль [@юзер]` — посмотреть профиль
+📝 `!описаниепрофиль текст` — изменить описание
+🔄 `!сброситьописание` — сбросить описание
 
-🎮 Развлечения
-🎲 !рандом [min] [max] — случайное число
-🎯 !орёл — подбросить монетку
-🤔 !выбор вариант1, вариант2 — случайный выбор
-🎱 !шар вопрос — магический шар
-🎰 !слоты [ставка] — игровые автоматы
-📚 !викторина — случайная викторина
-🎭 !кто вопрос — случайный участник
+🎮 **Развлечения**
+🎲 `!рандом [min] [max]` — случайное число
+🎯 `!орёл` — подбросить монетку
+🤔 `!выбор вариант1, вариант2` — случайный выбор
+🎱 `!шар вопрос` — магический шар
+🎰 `!слоты [ставка]` — игровые автоматы
+📚 `!викторина` — случайная викторина
+🎭 `!кто вопрос` — случайный участник
 
-🛡 Модерация
-🔇 !мут @участник [время] [причина] — замутить
-🔊 !размут @участник — размутить
-🧹 !очистить [кол-во] — очистить чат
-👢 !кик @участник [причина] — кикнуть
-🔨 !бан @участник [причина] — забанить
+🛡 **Модерация**
+🔇 `!мут @участник [время] [причина]` — замутить
+🔊 `!размут @участник` — размутить
+🧹 `!очистить [кол-во]` — очистить чат
+👢 `!кик @участник [причина]` — кикнуть
+🔨 `!бан @участник [причина]` — забанить
 
-⚙️ Админ-команды
-➕ !допкредит @юзер сумма — добавить кредиты
-➖ !минускредит @юзер сумма — снять кредиты
+⚙️ **Админ-команды**
+➕ `!допкредит @юзер сумма` — добавить кредиты
+➖ `!минускредит @юзер сумма` — снять кредиты
 
-ℹ️ !помощь — это сообщение
+ℹ️ `!помощь` — это сообщение
 """
             await ctx.send(help_text)
         except Exception as e:
@@ -755,7 +766,6 @@ class Clans(commands.Cog):
         embed.add_field(name="👑 Владелец", value=owner_name, inline=True)
         embed.add_field(name="💰 Казна", value=f"{clan['balance']} кредитов", inline=True)
         embed.add_field(name="👥 Участники", value=f"{member_count}/{clan['member_slots']}", inline=True)
-        embed.add_field(name="📈 Множитель дохода", value=f"x{clan['income_multiplier']}", inline=True)
         
         member_list = []
         for i, member in enumerate(members[:10], 1):
@@ -793,7 +803,7 @@ class Clans(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @commands.command(name="внести_клан")
+    @commands.command(name="внестиклан")
     async def clan_deposit(self, ctx, amount: int):
         user = ctx.author
         clan_name = await get_user_clan(user.id)
@@ -820,7 +830,7 @@ class Clans(commands.Cog):
         
         await ctx.send(f"✅ {user.mention} внес {amount} кредитов в казну клана '{clan_name}'!")
 
-    @commands.command(name="снять_клан")
+    @commands.command(name="снятьклан")
     async def clan_withdraw(self, ctx, amount: int):
         user = ctx.author
         clan_name = await get_user_clan(user.id)
@@ -850,7 +860,7 @@ class Clans(commands.Cog):
 
 # ==================== ПРОФИЛЬ ====================
 class Profile(commands.Cog):
-    def __init__(self, bot):  # ИСПРАВЛЕНО: было def init
+    def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="профиль")
@@ -868,7 +878,7 @@ class Profile(commands.Cog):
             color=member.color
         )
         
-        avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
+        avatar_url = member.display_avatar.url
         embed.set_thumbnail(url=avatar_url)
         
         embed.add_field(name="💰 Баланс", value=f"{balance} кредитов", inline=True)
@@ -902,7 +912,7 @@ class Profile(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name="описание_профиль")
+    @commands.command(name="описаниепрофиль")
     async def set_profile_description(self, ctx, *, description: str):
         if len(description) > 200:
             await ctx.send("❌ Описание не должно превышать 200 символов!")
@@ -911,7 +921,7 @@ class Profile(commands.Cog):
         await update_profile_description(ctx.author.id, description)
         await ctx.send("✅ Описание профиля обновлено!")
 
-    @commands.command(name="сбросить_описание")
+    @commands.command(name="сброситьописание")
     async def reset_profile_description(self, ctx):
         await update_profile_description(ctx.author.id, "")
         await ctx.send("✅ Описание профиля сброшено!")
@@ -968,37 +978,61 @@ class Fun(commands.Cog):
         
         await ctx.send(embed=embed)
 
-@commands.command(name="слоты")
-@commands.cooldown(1, 10, commands.BucketType.user)
-async def slots(self, ctx, bet: int = 10):  # ДОБАВИТЬ self
-    if bet <= 0:
-        await ctx.send("❌ Ставка должна быть положительной!")
-        return
+    @commands.command(name="слоты")
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    async def slots(self, ctx, bet: int = 10):
+        if bet <= 0:
+            await ctx.send("❌ Ставка должна быть положительной!")
+            return
 
-    balance = await get_balance(ctx.author.id)
-    if balance < bet:
-        await ctx.send("❌ Недостаточно кредитов!")
-        return
+        balance = await get_balance(ctx.author.id)
+        if balance < bet:
+            await ctx.send("❌ Недостаточно кредитов!")
+            return
 
-    symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
-    result = [random.choice(symbols) for _ in range(3)]
-    
-    if result[0] == result[1] == result[2]:
-        if result[0] == "💎":
-            multiplier = 10
-        elif result[0] == "7️⃣":
-            multiplier = 5
+        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣"]
+        result = [random.choice(symbols) for _ in range(3)]
+        
+        if result[0] == result[1] == result[2]:
+            if result[0] == "💎":
+                multiplier = 10
+            elif result[0] == "7️⃣":
+                multiplier = 5
+            else:
+                multiplier = 3
+            win_amount = int(bet * multiplier)
+            await update_balance(ctx.author.id, win_amount - bet)
+        elif result[0] == result[1] or result[1] == result[2]:
+            multiplier = 1.5
+            win_amount = int(bet * multiplier)
+            await update_balance(ctx.author.id, win_amount - bet)
         else:
-            multiplier = 3
-        net_win = int(bet * multiplier) - bet
-        await update_balance(ctx.author.id, net_win)
-    elif result[0] == result[1] or result[1] == result[2]:
-        multiplier = 1.5
-        net_win = int(bet * multiplier) - bet
-        await update_balance(ctx.author.id, net_win)
-    else:
-        await update_balance(ctx.author.id, -bet)
-        net_win = -bet
+            win_amount = 0
+            await update_balance(ctx.author.id, -bet)
+        
+        embed = discord.Embed(
+            title="🎰 Игровые автоматы",
+            color=0xffd700 if win_amount > 0 else 0xff0000
+        )
+        
+        embed.add_field(
+            name="Результат",
+            value=f"| {result[0]} | {result[1]} | {result[2]} |",
+            inline=False
+        )
+        
+        if win_amount > 0:
+            if multiplier == 10:
+                embed.add_field(name="🎉 ДЖЕКПОТ!", value=f"Вы выиграли {win_amount} кредитов!", inline=False)
+            else:
+                embed.add_field(name="✅ Выигрыш", value=f"+{win_amount} кредитов (x{multiplier})", inline=False)
+        else:
+            embed.add_field(name="❌ Проигрыш", value=f"-{bet} кредитов", inline=False)
+        
+        embed.add_field(name="💰 Баланс", value=f"{await get_balance(ctx.author.id)} кредитов", inline=True)
+        embed.set_footer(text=f"Игрок: {ctx.author.display_name}")
+        
+        await ctx.send(embed=embed)
     
     @commands.command(name="викторина")
     @commands.cooldown(1, 30, commands.BucketType.user)
@@ -1072,7 +1106,7 @@ async def slots(self, ctx, bet: int = 10):  # ДОБАВИТЬ self
         )
         embed.add_field(name="❓ Вопрос", value=question, inline=False)
         embed.add_field(name="👤 Выбран", value=chosen.mention, inline=False)
-        embed.set_thumbnail(url=chosen.avatar.url if chosen.avatar else chosen.default_avatar.url)
+        embed.set_thumbnail(url=chosen.display_avatar.url)
         
         await ctx.send(embed=embed)
 
@@ -1266,14 +1300,6 @@ class Events(commands.Cog):
         print("=" * 50)
 
     @commands.Cog.listener()
-    async def on_disconnect(self):
-        print("🔌 Бот отключен от Discord")
-
-    @commands.Cog.listener()
-    async def on_resumed(self):
-        print("🔁 Соединение с Discord восстановлено")
-
-    @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
             seconds = int(error.retry_after)
@@ -1298,62 +1324,58 @@ class Events(commands.Cog):
             await ctx.send("❌ Произошла ошибка при выполнении команды.")
 
 # ==================== ЗАПУСК БОТА ====================
-async def setup_bot():
+async def setup():
+    await bot.add_cog(Economy(bot))
+    await bot.add_cog(Clans(bot))
+    await bot.add_cog(Profile(bot))
+    await bot.add_cog(Fun(bot))
+    await bot.add_cog(Mod(bot))
+    await bot.add_cog(Events(bot))
+
+@bot.event
+async def on_ready():
     try:
         bot.db = await create_db_pool()
-        await bot.add_cog(Economy(bot))
-        await bot.add_cog(Clans(bot))
-        await bot.add_cog(Profile(bot))
-        await bot.add_cog(Fun(bot))
-        await bot.add_cog(Mod(bot))
-        await bot.add_cog(Events(bot))
-        print("✅ Все коги загружены")
-        return True
+        await setup()
+        print(f"✅ Бот запущен как {bot.user}")
     except Exception as e:
-        print(f"❌ Ошибка при настройке бота: {e}")
-        return False
-
-async def close_bot():
-    """Корректное закрытие бота"""
-    print("🔄 Завершаем работу бота...")
-    try:
-        if hasattr(bot, 'db') and bot.db:
-            await bot.db.close()
-            print("✅ Пул соединений с БД закрыт")
+        print(f"❌ Ошибка при запуске: {e}")
         await bot.close()
-        print("✅ Соединение с Discord закрыто")
-    except Exception as e:
-        print(f"⚠️ Ошибка при закрытии: {e}")
 
-async def main():
-    """Основная асинхронная функция для запуска бота"""
+async def close_db():
+    if hasattr(bot, 'db') and not bot.db.is_closed():
+        await bot.db.close()
+        print("✅ Соединение с базой данных закрыто")
+
+@bot.event
+async def on_disconnect():
+    await close_db()
+
+def run_bot():
     try:
-        setup_ok = await setup_bot()
-        if not setup_ok:
-            print("❌ Не удалось настроить бота")
-            return
-        
-        print("🚀 Запускаем Discord бота...")
-        await bot.start(TOKEN)
+        asyncio.run(bot.start(TOKEN))
     except KeyboardInterrupt:
-        print("⏹ Остановка по запросу пользователя...")
+        print("\n🛑 Получен сигнал прерывания, завершаю работу...")
     except Exception as e:
-        print(f"❌ Ошибка при запуске бота: {e}")
-    finally:
-        await close_bot()
+        print(f"❌ Неожиданная ошибка: {e}")
 
-if __name__ == '__main__':
-    print("🔧 Инициализация приложения...")
-    
-    # Запускаем Flask в отдельном потоке
-    keep_alive()
-    
-    # Даем Flask время запуститься
-    import time
-    time.sleep(2)
-    
-    # Запускаем Discord бота в основном потоке
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"❌ Фатальная ошибка: {e}")
+# Добавь в самый конец main.py
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot OK"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# Запускаем Flask в отдельном потоке
+flask_thread = Thread(target=run_flask)
+flask_thread.daemon = True
+flask_thread.start()
+
+if __name__ == "__main__":
+    run_bot()
