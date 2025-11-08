@@ -207,15 +207,23 @@ class Economy(commands.Cog):
             await update_balance(user.id, -penalty)
             await ctx.send(f'🕊 {user.mention}, -{penalty} рейтинга. Попробуй ещё! (Баланс: {await get_balance(user.id)})')
 
-    @commands.command(name="фарм")
-    @commands.cooldown(1, 1200, commands.BucketType.user)
-    async def farm(self, ctx):
+@commands.command(name="фарм")
+@commands.cooldown(1, 1200, commands.BucketType.user)
+async def farm(self, ctx):
+    try:
         user = ctx.author
         role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
-
-        if not role or role not in user.roles:
-            await ctx.send("⛔️ Эта команда доступна только для Патриотов.")
+        
+        print(f"DEBUG: Проверка роли для {user.name}")  # Добавь эту строку
+        
+        if not role:
+            await ctx.send("❌ Роль 'Патриот' не найдена на сервере!")
             return
+            
+        if role not in user.roles:
+            await ctx.send("⛔️ У вас нет роли Патриот!")
+            return
+            
 
         user_data = await get_user_data(user.id)
         base_reward = random.randint(30, 70)
