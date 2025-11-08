@@ -10,6 +10,8 @@ from flask import Flask
 from threading import Thread
 import signal
 import sys
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv("DISCORD_TOKEN")
