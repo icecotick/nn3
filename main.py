@@ -1378,4 +1378,5 @@ flask_thread.daemon = True
 flask_thread.start()
 
 if __name__ == "__main__":
+
     run_bot()
