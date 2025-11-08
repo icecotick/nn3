@@ -237,39 +237,6 @@ async def farm(self, ctx):
 
         await update_balance(user.id, reward)
         await ctx.send(f"🌾 {user.mention}, вы заработали {reward} соц. кредитов{booster_text}! (Баланс: {await get_balance(user.id)})")
-        
-@bot.command(name="тесткоманды")
-async def test_commands(ctx):
-    results = []
-    
-    # Тестируем каждую команду
-    commands_to_test = [
-        "!фарм",
-        "!ежедневный", 
-        "!рулетка 100",
-        "!бустер фарма",
-        "!купитьлицензию малый",
-        "!клан",
-        "!клантоп",
-        "!профиль"
-    ]
-    
-    # Проверяем роль Патриот
-    role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
-    has_role = role and role in ctx.author.roles
-    
-    results.append(f"**Роль Патриот:** {'✅ Есть' if has_role else '❌ Нету'}")
-
-    # Проверяем что команды зарегистрированы
-    bot_commands = [cmd.name for cmd in bot.commands]
-    
-    for cmd in ["фарм", "ежедневный", "рулетка", "бустер", "купитьлицензию", "клан", "клантоп", "профиль"]:
-        if cmd in bot_commands:
-            results.append(f"✅ Команда {cmd} зарегистрирована")
-        else:
-            results.append(f"❌ Команда {cmd} НЕ зарегистрирована")
-    
-    await ctx.send("\n".join(results))
 
     @commands.command(name="баланс")
     @commands.cooldown(1, 5, commands.BucketType.user)
