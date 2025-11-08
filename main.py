@@ -238,11 +238,11 @@ async def farm(self, ctx):
         await update_balance(user.id, reward)
         await ctx.send(f"🌾 {user.mention}, вы заработали {reward} соц. кредитов{booster_text}! (Баланс: {await get_balance(user.id)})")
 
-    @commands.command(name="баланс")
-    @commands.cooldown(1, 5, commands.BucketType.user)
-    async def balance(self, ctx):
-        bal = await get_balance(ctx.author.id)
-        await ctx.send(f'💰 {ctx.author.mention}, ваш баланс: {bal} кредитов')
+@commands.command(name="баланс")
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def balance(self, ctx):
+    bal = await get_balance(ctx.author.id)
+    await ctx.send(f'💰 {ctx.author.mention}, ваш баланс: {bal} кредитов')
 
     @commands.command(name="перевести")
     async def transfer(self, ctx, member: discord.Member, amount: int):
